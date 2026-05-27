@@ -90,7 +90,7 @@ function renderFissures() {
   const tbody = document.querySelector('#fissure-table tbody')!;
   tbody.innerHTML = filtered.map(f => `
     <tr class="${f.is_expiring ? 'expiring' : ''}" style="background:${TIER_BG[f.tier_key] || '#252525'};color:${TIER_FG};">
-      <td>${f.tier_label}</td>
+      <td><img src="/relics/${f.tier_key}.png" class="relic-icon" alt=""> ${f.tier_label}</td>
       <td>${f.node_name}</td>
       <td>${f.planet}</td>
       <td>${f.mission_type}</td>

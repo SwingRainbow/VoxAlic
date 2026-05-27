@@ -142,34 +142,33 @@ fn tier_order(key: &str) -> usize {
 /// Translate mission type key to Chinese label
 fn mission_type(key: &str) -> &str {
     match key {
-        "MT_EXTERMINATION" => "歼灭",
-        "MT_SURVIVAL" => "生存",
-        "MT_CAPTURE" => "捕获",
-        "MT_DEFENSE" => "防御",
-        "MT_MOBILE_DEFENSE" => "移防",
-        "MT_RESCUE" => "救援",
-        "MT_SABOTAGE" => "破坏",
-        "MT_SPY" => "间谍",
-        "MT_INTERCEPTION" => "拦截",
-        "MT_EXCAVATE" => "挖掘",
-        "MT_HIVE" => "清巢",
-        "MT_TERRITORY" => "中断",
         "MT_ARENA" => "竞技场",
-        "MT_PURSUIT" => "追击",
-        "MT_RUSH" => "强袭",
-        "MT_ASSAULT" => "突击",
-        "MT_SALVAGE" => "清剿",
-        "MT_EVACUATION" => "撤离",
-        "MT_VOID_CASCADE" => "虚空洪流",
-        "MT_VOID_ARMAGEDDON" => "虚空决战",
-        "MT_VOID_FLOOD" => "虚空覆涌",
-        "MT_ALCHEMY" => "炼金",
-        "MT_LANDSCAPE" => "自由漫步",
-        "MT_SURVIVAL_DARK" => "暗影生存",
-        "MT_DEFENSE_DARK" => "暗影防御",
-        "MT_ASSAULT_TILESET" => "突击",
-        "MT_RETRIEVAL" => "夺回",
-        "MT_ARENA_SEDNA" => "竞技场",
+        "MT_ARTIFACT" => "中断",
+        "MT_ASSAULT" => "强袭",
+        "MT_ASSASSINATION" => "刺杀",
+        "MT_CAPTURE" => "捕获",
+        "MT_CORRUPTION" => "虚空洪流",
+        "MT_DEFENSE" => "防御",
+        "MT_DISRUPTION" => "中断",
+        "MT_EVACUATION" => "叛逃",
+        "MT_EXCAVATE" => "挖掘",
+        "MT_EXTERMINATION" => "歼灭",
+        "MT_HIVE" => "清巢",
+        "MT_INTEL" => "间谍",
+        "MT_LANDSCAPE" => "自由探索",
+        "MT_MOBILE_DEFENSE" => "移动防御",
+        "MT_PVP" => "武形秘仪",
+        "MT_RESCUE" => "救援",
+        "MT_RETRIEVAL" => "劫持",
+        "MT_SABOTAGE" => "破坏",
+        "MT_SECTOR" => "黑暗地带",
+        "MT_SURVIVAL" => "生存",
+        "MT_TERRITORY" => "拦截",
+        "MT_VOID_CASCADE" => "虚空覆涌",
+        "MT_ASCENSION" => "Ascension",
+        "MT_ALCHEMY" => "元素转换",
+        "MT_ENDLESS_CAPTURE" => "Legacyte Harvest",
+        "MT_DEFAULT" => "未知",
         _ => key,
     }
 }
@@ -648,7 +647,7 @@ pub fn parse_fissures(data: &Value) -> (Vec<Fissure>, Vec<Fissure>, Vec<Fissure>
             }
 
             let mut fissure = parse_fissure(m, false);
-            fissure.is_hard = m["isHard"]
+            fissure.is_hard = m["Hard"]
                 .as_bool()
                 .unwrap_or(false);
 
