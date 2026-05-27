@@ -1,43 +1,50 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="stylesheet" href="/src/styles.css" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri App</title>
-    <script type="module" src="/src/main.ts" defer></script>
-  </head>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Warframe 状态监控</title>
+  <link rel="stylesheet" href="/src/styles.css" />
+</head>
+<body>
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="cycles">世界时间</button>
+    <button class="tab-btn" data-tab="fissures">虚空裂缝</button>
+  </div>
 
-  <body>
-    <main class="container">
-      <h1>Welcome to Tauri</h1>
+  <div id="tab-cycles" class="tab-content active">
+    <div id="cycle-cards"></div>
+  </div>
 
-      <div class="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/src/assets/vite.svg" class="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img
-            src="/src/assets/tauri.svg"
-            class="logo tauri"
-            alt="Tauri logo"
-          />
-        </a>
-        <a href="https://www.typescriptlang.org/docs" target="_blank">
-          <img
-            src="/src/assets/typescript.svg"
-            class="logo typescript"
-            alt="typescript logo"
-          />
-        </a>
-      </div>
-      <p>Click on the Tauri logo to learn more about the framework</p>
+  <div id="tab-fissures" class="tab-content">
+    <div class="filter-bar">
+      <label>纪元:
+        <select id="tier-filter"><option value="">全部</option></select>
+      </label>
+      <label>任务类型:
+        <select id="type-filter"><option value="">全部</option></select>
+      </label>
+    </div>
+    <div class="sub-tabs">
+      <button class="sub-tab-btn active" data-sub="normal">普通裂缝 (<span id="count-normal">0</span>)</button>
+      <button class="sub-tab-btn" data-sub="hard">钢铁之路 (<span id="count-hard">0</span>)</button>
+      <button class="sub-tab-btn" data-sub="storm">虚空风暴 (<span id="count-storm">0</span>)</button>
+    </div>
+    <div class="table-wrapper">
+      <table id="fissure-table">
+        <thead>
+          <tr><th>纪元</th><th>节点名</th><th>星球/星域</th><th>任务类型</th><th>剩余时间</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
 
-      <form class="row" id="greet-form">
-        <input id="greet-input" placeholder="Enter a name..." />
-        <button type="submit">Greet</button>
-      </form>
-      <p id="greet-msg"></p>
-    </main>
-  </body>
+  <div class="status-bar">
+    <button id="btn-refresh">立即刷新</button>
+    <span id="status-text">等待首次加载...</span>
+  </div>
+
+  <script type="module" src="/src/main.ts" defer></script>
+</body>
 </html>
