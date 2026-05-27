@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "tauri-warframe-monitor",
+  "productName": "Warframe Monitor",
   "version": "0.1.0",
-  "identifier": "com.tdd.tauri-warframe-monitor",
+  "identifier": "com.warframe.monitor",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,9 +13,11 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "tauri-warframe-monitor",
-        "width": 800,
-        "height": 600
+        "title": "Warframe 状态监控",
+        "width": 1060,
+        "height": 680,
+        "minWidth": 700,
+        "minHeight": 500
       }
     ],
     "security": {
