@@ -23,6 +23,7 @@ pub struct CycleInfo {
     pub state_icon: String,   // emoji
     pub remain_ms: i64,
     pub is_day: bool,
+    pub remain_str: String,   // like "1h 02m 30s"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
