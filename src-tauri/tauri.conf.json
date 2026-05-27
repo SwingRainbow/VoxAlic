@@ -1,0 +1,59 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "VoxAlic",
+  "version": "1.0.0",
+  "identifier": "com.voxalic.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "VoxAlic",
+        "width": 1060,
+        "height": 680,
+        "minWidth": 700,
+        "minHeight": 500
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdDQ0M0N0E0M0YxNkM2Q0YKUldUUHhoWS9wRWZNZkZidi9VSWRHcmlHckUyMk1xZGpmV1hnR2pvZHRZbm5Ma2QrenB4Q1FsOUkK",
+      "endpoints": [
+        "https://github.com/SwingRainbow/VoxAlic/releases/latest/download/latest.json"
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "publisher": "CCvTDD",
+    "copyright": "© 2025 CCvTDD",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "WebView2Loader.dll": "WebView2Loader.dll"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "offlineInstaller"
+      },
+      "wix": {
+        "language": "zh-CN"
+      }
+    }
+  }
+}

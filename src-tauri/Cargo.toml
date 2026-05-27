@@ -1,0 +1,36 @@
+[package]
+name = "voxalic"
+version = "1.0.0"
+description = "VoxAlic — Warframe worldstate monitor"
+authors = ["you"]
+edition = "2021"
+
+[lib]
+name = "voxalic_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+# 生产构建必须启用此 feature（决定 dev=cfg!(not(feature="custom-protocol"))）。
+# 缺失会导致 release exe 仍加载 devUrl(localhost:1420) → "localhost 拒绝连接"。请勿删除！
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["full"] }
+chrono = "0.4"
+windows = { version = "0.58", features = [
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Dwm",
+    "Win32_System_Registry",
+] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+tauri-plugin-updater = "2.10.1"

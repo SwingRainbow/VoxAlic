@@ -1,0 +1,3 @@
+# MinGW WinLibs must be in PATH for builds to succeed.
+# Installed via: winget install BrechtSanders.WinLibs.POSIX.UCRT
+# Path: %LOCALAPPDATA%\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_...\mingw64\bin

@@ -1,0 +1,54 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+src-tauri/target/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# CodeGraph index
+.codegraph/
+
+# Tauri signing keys — never commit these
+*.key
+*.key.pub
+
+# Development/test artifacts
+_*.py
+_*.json
+pic/
+warframe-bilingual_*.json
+latest.json
+*.png
+
+# Planning/dev docs
+*_findings.md
+*_progress.md
+*_task_plan.md
+*_plan.md
+code-review.md
+findings.md
+progress.md
+docs/
+AGENTS.md
