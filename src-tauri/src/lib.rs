@@ -1,10 +1,14 @@
 mod api;
+mod config;
 mod models;
 mod state;
 
+use std::sync::Arc;
+use std::sync::RwLock as StdRwLock;
 use std::time::Duration;
 use state::{AppState, SharedState};
 use models::AppStatePayload;
+use config::{AppConfig, load_config, save_config};
 use api::{fetch_worldstate, parse_fissures, parse_cycles, fmt_remain, now_ms};
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
@@ -63,12 +67,31 @@ async fn refresh_now(state: tauri::State<'_, SharedState>, app: tauri::AppHandle
     Ok(())
 }
 
+type SharedConfig = Arc<StdRwLock<AppConfig>>;
+
+#[tauri::command]
+fn get_config(cfg: tauri::State<'_, SharedConfig>) -> AppConfig {
+    cfg.read().unwrap().clone()
+}
+
+#[tauri::command]
+fn set_config(cfg: tauri::State<'_, SharedConfig>, config: AppConfig, app: tauri::AppHandle) -> Result<(), String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    save_config(&app_data_dir, &config)?;
+    *cfg.write().unwrap() = config;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let state: SharedState = SharedState::default();
+
+            // Load config
+            let app_data_dir = app.path().app_data_dir().expect("app data dir");
+            let config: SharedConfig = Arc::new(StdRwLock::new(load_config(&app_data_dir)));
 
             // Background fetch loop (every REFRESH_SEC)
             let fetch_state = state.clone();
@@ -192,21 +215,26 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Window close -> hide to tray
+            // Window close -> hide to tray or exit based on config
+            let close_config = config.clone();
             if let Some(window) = app.get_webview_window("main") {
                 let window_clone = window.clone();
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = window_clone.hide();
+                        let cfg = close_config.read().unwrap();
+                        if cfg.close_to_tray {
+                            api.prevent_close();
+                            let _ = window_clone.hide();
+                        }
                     }
                 });
             }
 
             app.manage(state);
+            app.manage(config);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![refresh_now])
+        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -10,6 +10,7 @@
   <div class="tabs">
     <button class="tab-btn active" data-tab="cycles">世界时间</button>
     <button class="tab-btn" data-tab="fissures">虚空裂缝</button>
+    <button class="tab-btn" data-tab="settings">设置</button>
   </div>
 
   <div id="tab-cycles" class="tab-content active">
@@ -37,6 +38,20 @@
         </thead>
         <tbody></tbody>
       </table>
+    </div>
+  </div>
+
+  <div id="tab-settings" class="tab-content">
+    <div class="settings-group">
+      <div class="settings-item">
+        <div class="settings-label">关闭窗口行为</div>
+        <div class="settings-desc">点击 X 时最小化到托盘，不退出程序</div>
+        <label class="toggle">
+          <input type="checkbox" id="setting-close-to-tray" checked />
+          <span class="toggle-slider"></span>
+          <span class="toggle-text">最小化到托盘</span>
+        </label>
+      </div>
     </div>
   </div>
 

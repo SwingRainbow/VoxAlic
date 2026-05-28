@@ -38,3 +38,12 @@
 - 钢铁之路 0 条: `m["isHard"]` → `m["Hard"]`
 - 任务类型英文: `mission_type()` 映射重新对齐 Python `MISSION_TYPE`
 - 节点名不匹配: 完整 500+ 条目 `node_lookup()` 来自 Python `data/nodes.py`
+
+## 设置功能 (2026-05-28)
+
+### 配置文件持久化
+- 使用 `app.path().app_data_dir()` 获取 AppData 目录
+- JSON 格式: `{"close_to_tray": true}`
+- 首次运行自动创建默认配置
+- 配置用 `Arc<RwLock<AppConfig>>` 在 Tauri 状态中管理
+- 关闭行为: `CloseRequested` 事件中读取配置决定 prevent_close + hide 还是放行退出

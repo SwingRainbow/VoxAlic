@@ -15,3 +15,4 @@
 | 5. 前端 UI | ✅ complete | index.html + styles.css + main.ts |
 | 6. 构建发布 | ✅ complete | MSI (7MB) + NSIS (4MB) + exe (23MB) |
 | 7. Bug 修复 | ✅ complete | 世界时间不动 + 筛选计数 + 数据映射 |
+| 8. 设置功能 | ✅ complete | 设置 tab + 关闭行为可配置 |

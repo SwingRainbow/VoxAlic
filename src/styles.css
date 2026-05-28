@@ -145,6 +145,69 @@ td {
 .relic-icon { width: 22px; height: 14px; vertical-align: middle; margin-right: 4px; object-fit: contain; }
 tr.expiring td:last-child { color: var(--warn); font-weight: bold; }
 
+/* ── Settings ── */
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-item {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 14px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-label {
+  font-size: 14px;
+  min-width: 120px;
+}
+.settings-desc {
+  font-size: 12px;
+  color: var(--dim);
+  flex: 1;
+  min-width: 200px;
+}
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  margin-left: auto;
+}
+.toggle input { display: none; }
+.toggle-slider {
+  width: 40px;
+  height: 22px;
+  background: #555;
+  border-radius: 11px;
+  position: relative;
+  transition: background 0.2s;
+}
+.toggle-slider::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s;
+}
+.toggle input:checked + .toggle-slider {
+  background: var(--accent);
+}
+.toggle input:checked + .toggle-slider::after {
+  transform: translateX(18px);
+}
+.toggle-text {
+  font-size: 13px;
+  color: var(--text);
+}
+
 /* ── Status Bar ── */
 .status-bar {
   display: flex;

@@ -1,6 +1,10 @@
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 
+interface AppConfig {
+  close_to_tray: boolean;
+}
+
 // ── Type definitions matching Rust AppStatePayload ──
 interface Fissure {
   node_key: string;
@@ -168,6 +172,17 @@ window.addEventListener('DOMContentLoaded', () => {
   // Filters
   document.getElementById('tier-filter')!.addEventListener('change', renderFissures);
   document.getElementById('type-filter')!.addEventListener('change', renderFissures);
+
+  // Settings: load config
+  const closeToggle = document.getElementById('setting-close-to-tray') as HTMLInputElement;
+  invoke<AppConfig>('get_config').then(cfg => {
+    closeToggle.checked = cfg.close_to_tray;
+  });
+
+  // Settings: save on change
+  closeToggle.addEventListener('change', () => {
+    invoke('set_config', { config: { close_to_tray: closeToggle.checked } });
+  });
 
   // Tauri events
   listen<AppStatePayload>('worldstate-update', (event) => {

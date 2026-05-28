@@ -57,10 +57,23 @@ e2e0c05 feat: add API layer — fetch, parse fissures and cycles
 
 ### Git 提交历史
 ```
-<latest>  fix: cycle time not ticking + filter count not updating (v0.1.1)
+<latest>  feat: add settings tab with configurable close behavior
+657cbd7   fix: cycle time not ticking + filter count not updating (v0.1.1)
+b20dc2f   fix: mission type mappings, steel path detection, relic icons
+4642e81   fix: complete 500+ node lookup table from Python original
+feb1f80   Docs: add planning files — task plan, findings, progress log
 7779b33   feat: frontend UI — tabs, cycle cards, fissure table with filtering
 6851b85   feat: add state management, background loops, system tray
 e2e0c05   feat: add API layer — fetch, parse fissures and cycles
 751cd88   feat: add data models (Fissure, CycleInfo, AppStatePayload)
 151657f   Initial scaffold — Tauri v2 + Vanilla TS + Rust deps
 ```
+
+## 2026-05-28 会话 — 设置功能
+
+- [x] 新增 `config.rs` — AppConfig 结构体 + JSON 持久化
+- [x] `get_config` / `set_config` Tauri 命令
+- [x] 关闭行为读取配置：后台托盘 vs 直接退出
+- [x] 设置 tab UI — 拨动开关
+- [x] 前端加载/保存配置
+- [x] 构建验证通过
