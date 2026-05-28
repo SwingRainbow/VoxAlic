@@ -16,3 +16,4 @@
 | 6. 构建发布 | ✅ complete | MSI (7MB) + NSIS (4MB) + exe (23MB) |
 | 7. Bug 修复 | ✅ complete | 世界时间不动 + 筛选计数 + 数据映射 |
 | 8. 设置功能 | ✅ complete | 设置 tab + 关闭行为可配置 |
+| 9. 任务计时 | ✅ complete | OCR 屏幕捕获 + 模板匹配 + 维生检测 + 5min 截点提醒 |

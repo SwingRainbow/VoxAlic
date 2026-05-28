@@ -69,11 +69,45 @@ e2e0c05   feat: add API layer — fetch, parse fissures and cycles
 151657f   Initial scaffold — Tauri v2 + Vanilla TS + Rust deps
 ```
 
-## 2026-05-28 会话 — 设置功能
+## 2026-05-28 会话 — 任务计时功能
 
-- [x] 新增 `config.rs` — AppConfig 结构体 + JSON 持久化
-- [x] `get_config` / `set_config` Tauri 命令
-- [x] 关闭行为读取配置：后台托盘 vs 直接退出
-- [x] 设置 tab UI — 拨动开关
-- [x] 前端加载/保存配置
-- [x] 构建验证通过
+- [x] 新增 `capture.rs` — Win32 PrintWindow 屏幕捕获 + ROI 裁剪
+- [x] 新增 `ocr.rs` — 手写归一化互相关模板匹配 + NMS
+- [x] 新增 `mission_timer.rs` — 计时器状态机 + OCR 轮询线程 + 维生 HSV 检测
+- [x] 扩展 `models.rs` — MissionTimerPayload
+- [x] 扩展 `config.rs` — ROISettings, MissionTimerConfig
+- [x] 扩展 `lib.rs` — 全部整合，timer_command，tick 合并
+- [x] 前端：计时 tab + CSS 样式 + TS 渲染
+- [x] 构建验证通过，tag v0.3.0
+
+### 产物
+- `tauri-warframe-monitor.exe` (28MB)
+- `Warframe Monitor_0.3.0_x64-setup.exe` (NSIS)
+- `Warframe Monitor_0.3.0_x64_en-US.msi`
+
+### Git 提交历史
+```
+<latest>  feat: mission timer with OCR screen capture — v0.3.0
+d10420c   feat: integrate mission timer into lib.rs — thread, tick, commands
+c6c01d0   feat: add mission timer tab and CSS styles
+feat: add mission timer frontend rendering and controls
+b81f140   fix: preserve paused_elapsed when resuming timer
+abf85c4   fix: use asymmetric OCR validation bound (-10/+30s)
+ada91f9   feat: add mission timer state machine and OCR polling thread
+81ae428   feat: add MissionTimerConfig with ROI settings to AppConfig
+a25544d   feat: add MissionTimerPayload to data models
+9c25821   feat: add template matching OCR module
+c028bad   fix: address code review findings in capture.rs
+b0ed7c0   feat: add Win32 PrintWindow screen capture module
+9110ebd   feat: add windows/image deps and digit templates for OCR
+4a08bdc   feat: add settings tab with configurable close behavior
+657cbd7   fix: cycle time not ticking and filter count not updating
+b20dc2f   fix: mission type mappings, steel path detection, relic icons
+4642e81   fix: complete 500+ node lookup table from Python original
+feb1f80   Docs: add planning files — task plan, findings, progress log
+7779b33   feat: frontend UI — tabs, cycle cards, fissure table with filtering
+6851b85   feat: add state management, background loops, system tray
+e2e0c05   feat: add API layer — fetch, parse fissures and cycles
+751cd88   feat: add data models (Fissure, CycleInfo, AppStatePayload)
+151657f   Initial scaffold — Tauri v2 + Vanilla TS + Rust deps
+```
