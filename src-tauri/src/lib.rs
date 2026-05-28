@@ -111,6 +111,25 @@ fn timer_command(
     cmd_tx.send(cmd).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn list_windows(config: tauri::State<'_, SharedConfig>) -> Vec<window::WindowInfo> {
+    let cfg = config.read().unwrap();
+    window::list_windows(&cfg.mission_timer.window_title)
+}
+
+#[tauri::command]
+fn select_window(config: tauri::State<'_, SharedConfig>, hwnd: usize, app: tauri::AppHandle) -> Result<(), String> {
+    let mut cfg = config.write().unwrap();
+    cfg.mission_timer.selected_hwnd = hwnd;
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    crate::config::save_config(&app_data_dir, &cfg)
+}
+
+#[tauri::command]
+fn single_capture(cmd_tx: tauri::State<'_, mpsc::Sender<TimerCommand>>) -> Result<(), String> {
+    cmd_tx.send(TimerCommand::SingleCapture).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -129,7 +148,16 @@ pub fn run() {
             let timer_state: MissionTimerShared = Arc::new(StdRwLock::new(MissionTimerState::new()));
             let timer_config = config.clone();
             let timer_shared = timer_state.clone();
-            let cmd_tx = start_timer_thread(timer_shared, timer_config, templates_arc);
+            let (log_tx, log_rx) = mpsc::channel::<String>();
+            let cmd_tx = start_timer_thread(timer_shared, timer_config, templates_arc, log_tx);
+
+            // Log forwarding thread
+            let log_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                while let Ok(msg) = log_rx.recv() {
+                    let _ = log_handle.emit("timer-log", msg);
+                }
+            });
 
             // Background fetch loop (every REFRESH_SEC)
             let fetch_state = state.clone();
@@ -295,7 +323,7 @@ pub fn run() {
             app.manage(cmd_tx);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, timer_command])
+        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, timer_command, list_windows, select_window, single_capture])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

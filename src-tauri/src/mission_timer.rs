@@ -21,11 +21,6 @@ pub enum TimerCommand {
     SingleCapture,
 }
 
-pub struct TimerChannels {
-    pub cmd: mpsc::Sender<TimerCommand>,
-    pub log: mpsc::Sender<String>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum TimerState {
     Idle,
@@ -299,14 +294,14 @@ fn resolve_hwnd(config: &AppConfig) -> isize {
     }
 }
 
-/// Spawn the OCR polling thread. Returns both command and log channels.
+/// Spawn the OCR polling thread. Returns the command channel sender.
 pub fn start_timer_thread(
     shared: Arc<std::sync::RwLock<MissionTimerState>>,
     config: Arc<std::sync::RwLock<AppConfig>>,
     templates: Arc<DigitTemplates>,
-) -> TimerChannels {
+    log_tx: mpsc::Sender<String>,
+) -> mpsc::Sender<TimerCommand> {
     let (cmd_tx, rx) = mpsc::channel::<TimerCommand>();
-    let (log_tx, _log_rx) = mpsc::channel::<String>();
     let thread_log_tx = log_tx.clone();
 
     std::thread::spawn(move || {
@@ -522,8 +517,5 @@ pub fn start_timer_thread(
         }
     });
 
-    TimerChannels {
-        cmd: cmd_tx,
-        log: log_tx,
-    }
+    cmd_tx
 }
