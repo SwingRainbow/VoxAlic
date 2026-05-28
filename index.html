@@ -10,6 +10,7 @@
   <div class="tabs">
     <button class="tab-btn active" data-tab="cycles">世界时间</button>
     <button class="tab-btn" data-tab="fissures">虚空裂缝</button>
+    <button class="tab-btn" data-tab="timer">任务计时</button>
     <button class="tab-btn" data-tab="settings">设置</button>
   </div>
 
@@ -51,6 +52,41 @@
           <span class="toggle-slider"></span>
           <span class="toggle-text">最小化到托盘</span>
         </label>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-timer" class="tab-content">
+    <div class="timer-container">
+      <div class="timer-display">
+        <div class="timer-digits" id="timer-digits">0:00</div>
+        <div class="timer-status" id="timer-status">未启动</div>
+      </div>
+
+      <div class="timer-controls">
+        <label class="timer-mode-label">模式:</label>
+        <label class="timer-radio">
+          <input type="radio" name="timer-mode" value="normal" checked />
+          <span>普通</span>
+        </label>
+        <label class="timer-radio">
+          <input type="radio" name="timer-mode" value="fissure" />
+          <span>裂缝</span>
+        </label>
+      </div>
+
+      <div class="timer-buttons">
+        <button class="timer-btn start" id="btn-timer-start">开始</button>
+        <button class="timer-btn stop" id="btn-timer-stop">暂停</button>
+        <button class="timer-btn reset" id="btn-timer-reset">重置</button>
+      </div>
+
+      <div class="life-support-bar">
+        <div class="ls-label">维生系统</div>
+        <div class="ls-bar-track">
+          <div class="ls-bar-fill" id="ls-bar-fill" style="width:100%"></div>
+        </div>
+        <div class="ls-pct" id="ls-pct">--</div>
       </div>
     </div>
   </div>

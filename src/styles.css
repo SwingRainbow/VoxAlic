@@ -232,3 +232,122 @@ tr.expiring td:last-child { color: var(--warn); font-weight: bold; }
   font-size: 12px;
   margin-left: auto;
 }
+
+/* ── Mission Timer ── */
+.timer-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 0;
+}
+
+.timer-display {
+  text-align: center;
+}
+
+.timer-digits {
+  font-size: 64px;
+  font-weight: bold;
+  font-family: 'Consolas', 'Courier New', monospace;
+  color: #e0e0e0;
+  letter-spacing: 4px;
+}
+
+.timer-status {
+  font-size: 14px;
+  color: var(--dim);
+  margin-top: 4px;
+}
+
+.timer-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.timer-mode-label {
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.timer-radio {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.timer-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.timer-btn {
+  padding: 8px 24px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #fff;
+  transition: background 0.15s;
+}
+.timer-btn.start { background: #388E3C; }
+.timer-btn.start:hover { background: #43A047; }
+.timer-btn.stop { background: #F57C00; }
+.timer-btn.stop:hover { background: #FB8C00; }
+.timer-btn.reset { background: #555; }
+.timer-btn.reset:hover { background: #666; }
+
+/* Life Support */
+.life-support-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 360px;
+}
+
+.ls-label {
+  font-size: 12px;
+  color: var(--dim);
+  min-width: 48px;
+}
+
+.ls-bar-track {
+  flex: 1;
+  height: 14px;
+  background: #333;
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.ls-bar-fill {
+  height: 100%;
+  border-radius: 7px;
+  transition: width 1s ease, background 0.5s;
+}
+.ls-bar-fill.normal { background: #4CAF50; }
+.ls-bar-fill.warning { background: #FF9800; }
+.ls-bar-fill.danger { background: #F44336; }
+
+.ls-pct {
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--text);
+  min-width: 36px;
+  text-align: right;
+}
+
+/* Timer state: checkpoint pulse */
+#timer-status.checkpoint {
+  color: var(--warn);
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
