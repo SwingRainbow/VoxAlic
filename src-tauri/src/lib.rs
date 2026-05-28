@@ -18,7 +18,7 @@ fn build_payload(state: &AppState) -> AppStatePayload {
     let mut normal = state.normal_fissures.clone();
     let mut hard = state.hard_fissures.clone();
     let mut storms = state.storm_fissures.clone();
-    let cycles = state.cycles.clone();
+    let mut cycles = state.cycles.clone();
 
     let now = now_ms();
     for f in normal.iter_mut().chain(hard.iter_mut()).chain(storms.iter_mut()) {
@@ -26,6 +26,11 @@ fn build_payload(state: &AppState) -> AppStatePayload {
         f.remain_ms = remain;
         f.remain_str = fmt_remain(remain);
         f.is_expiring = remain > 0 && remain < 300_000;
+    }
+    for c in &mut cycles {
+        let remain = c.expiry_ms - now;
+        c.remain_ms = remain;
+        c.remain_str = fmt_remain(remain);
     }
 
     AppStatePayload {

@@ -729,6 +729,7 @@ fn parse_plains_cycle(data: &Value, name: &str) -> CycleInfo {
                 remain_ms: remain,
                 is_day: true,
                 remain_str,
+                expiry_ms: now + remain,
             }
         } else {
             // Night bounties active (duration ~50 min), day approaching
@@ -741,6 +742,7 @@ fn parse_plains_cycle(data: &Value, name: &str) -> CycleInfo {
                 remain_ms: remain,
                 is_day: false,
                 remain_str,
+                expiry_ms: now + remain,
             }
         }
     } else {
@@ -755,6 +757,7 @@ fn parse_plains_cycle(data: &Value, name: &str) -> CycleInfo {
                 remain_ms: remain,
                 is_day: true,
                 remain_str: fmt_remain(remain),
+                expiry_ms: now + remain,
             }
         } else {
             let remain = PLAINS_CYCLE - cycle_pos;
@@ -765,6 +768,7 @@ fn parse_plains_cycle(data: &Value, name: &str) -> CycleInfo {
                 remain_ms: remain,
                 is_day: false,
                 remain_str: fmt_remain(remain),
+                expiry_ms: now + remain,
             }
         }
     }
@@ -786,6 +790,7 @@ fn parse_vallis_cycle() -> CycleInfo {
             remain_ms: remain,
             is_day: true,
             remain_str: fmt_remain(remain),
+            expiry_ms: now + remain,
         }
     } else {
         // Cold phase — extreme cold
@@ -797,6 +802,7 @@ fn parse_vallis_cycle() -> CycleInfo {
             remain_ms: remain,
             is_day: false,
             remain_str: fmt_remain(remain),
+            expiry_ms: now + remain,
         }
     }
 }
@@ -818,6 +824,7 @@ fn parse_duviri_cycle() -> CycleInfo {
         remain_ms: remain,
         is_day: true,
         remain_str: fmt_remain(remain),
+        expiry_ms: now + remain,
     }
 }
 
@@ -845,6 +852,7 @@ fn parse_zariman_cycle(data: &Value) -> CycleInfo {
             remain_ms: remain,
             is_day: true,
             remain_str: fmt_remain(remain),
+            expiry_ms: now + remain,
         }
     } else {
         CycleInfo {
@@ -854,6 +862,7 @@ fn parse_zariman_cycle(data: &Value) -> CycleInfo {
             remain_ms: 0,
             is_day: true,
             remain_str: "切换中".to_string(),
+            expiry_ms: now,
         }
     }
 }

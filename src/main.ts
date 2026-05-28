@@ -98,11 +98,18 @@ function renderFissures() {
     </tr>
   `).join('');
 
-  // Update counts
-  const c = (list: Fissure[]) => list.filter(f => f.remain_ms > 0).length;
-  document.getElementById('count-normal')!.textContent = String(c(currentData.normal_fissures));
-  document.getElementById('count-hard')!.textContent = String(c(currentData.hard_fissures));
-  document.getElementById('count-storm')!.textContent = String(c(currentData.storm_fissures));
+  // Update counts with current filters applied
+  const tier = (document.getElementById('tier-filter') as HTMLSelectElement).value;
+  const type = (document.getElementById('type-filter') as HTMLSelectElement).value;
+  const countFiltered = (list: Fissure[]) => list.filter(f => {
+    if (f.remain_ms <= 0) return false;
+    if (tier && f.tier_label !== tier) return false;
+    if (type && f.mission_type !== type) return false;
+    return true;
+  }).length;
+  document.getElementById('count-normal')!.textContent = String(countFiltered(currentData.normal_fissures));
+  document.getElementById('count-hard')!.textContent = String(countFiltered(currentData.hard_fissures));
+  document.getElementById('count-storm')!.textContent = String(countFiltered(currentData.storm_fissures));
 }
 
 function updateFilters() {

@@ -14,3 +14,4 @@
 | 4. 托盘 + 循环 | ✅ complete | lib.rs — 后台 fetch/tick + 系统托盘 + 关闭隐藏 |
 | 5. 前端 UI | ✅ complete | index.html + styles.css + main.ts |
 | 6. 构建发布 | ✅ complete | MSI (7MB) + NSIS (4MB) + exe (23MB) |
+| 7. Bug 修复 | ✅ complete | 世界时间不动 + 筛选计数 + 数据映射 |

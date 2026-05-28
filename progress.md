@@ -42,3 +42,25 @@ e2e0c05 feat: add API layer — fetch, parse fissures and cycles
 | cargo check: `dlltool.exe` not found | 2 | winget install WinLibs MinGW (261MB) |
 | cargo check: `tray` module not found | 3 | Cargo.toml: tauri features 加 `tray-icon` |
 | cargo check: `.handle()` on AppHandle | 4 | lib.rs: `app.handle().clone()` → `app.clone()` |
+
+## 2026-05-28 会话 — Bug 修复
+
+- [x] 修复世界时间卡片不流动 → `CycleInfo` 加 `expiry_ms`，`build_payload` 每 tick 重算
+- [x] 修复筛选后 Tab 计数不更新 → 计数逻辑对齐表格筛选条件
+- [x] 构建验证通过
+- [x] 打 tag v0.1.1 正式版
+
+### 产物
+- `tauri-warframe-monitor.exe` (23MB)
+- `Warframe Monitor_0.1.0_x64-setup.exe` (NSIS, ~4MB)
+- `Warframe Monitor_0.1.0_x64_en-US.msi` (~7MB)
+
+### Git 提交历史
+```
+<latest>  fix: cycle time not ticking + filter count not updating (v0.1.1)
+7779b33   feat: frontend UI — tabs, cycle cards, fissure table with filtering
+6851b85   feat: add state management, background loops, system tray
+e2e0c05   feat: add API layer — fetch, parse fissures and cycles
+751cd88   feat: add data models (Fissure, CycleInfo, AppStatePayload)
+151657f   Initial scaffold — Tauri v2 + Vanilla TS + Rust deps
+```

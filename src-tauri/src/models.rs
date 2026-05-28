@@ -24,6 +24,7 @@ pub struct CycleInfo {
     pub remain_ms: i64,
     pub is_day: bool,
     pub remain_str: String,   // like "1h 02m 30s"
+    pub expiry_ms: i64,       // when this phase ends (ms timestamp)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
