@@ -1,6 +1,7 @@
 mod api;
 mod capture;
 mod config;
+mod mission_timer;
 mod models;
 mod ocr;
 mod state;
