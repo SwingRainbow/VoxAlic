@@ -60,10 +60,13 @@ impl MissionTimerState {
                     || self.inner_state == TimerState::Paused
                     || self.inner_state == TimerState::Checkpoint
                 {
+                    let is_fresh = self.inner_state == TimerState::Idle;
                     self.inner_state = TimerState::Running;
                     if self.start_instant.is_none() {
                         self.start_instant = Some(Instant::now());
-                        self.paused_elapsed = Duration::ZERO;
+                        if is_fresh {
+                            self.paused_elapsed = Duration::ZERO;
+                        }
                     }
                     self.payload.status_text = "运行中".into();
                 }
