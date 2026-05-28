@@ -2,6 +2,7 @@ mod api;
 mod capture;
 mod config;
 mod models;
+mod ocr;
 mod state;
 
 use std::sync::Arc;
