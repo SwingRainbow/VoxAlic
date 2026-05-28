@@ -36,6 +36,8 @@ pub struct MissionTimerPayload {
     pub life_support_pct: f32,
     pub life_support_level: String,
     pub status_text: String,
+    #[serde(default)]
+    pub detection_rate: f32,
 }
 
 impl Default for MissionTimerPayload {
@@ -48,6 +50,7 @@ impl Default for MissionTimerPayload {
             life_support_pct: 0.0,
             life_support_level: "unknown".into(),
             status_text: "等待任务开始".into(),
+            detection_rate: 0.0,
         }
     }
 }
