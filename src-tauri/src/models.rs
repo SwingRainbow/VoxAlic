@@ -28,6 +28,31 @@ pub struct CycleInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MissionTimerPayload {
+    pub elapsed_secs: u32,
+    pub elapsed_str: String,
+    pub state: String,
+    pub mode: String,
+    pub life_support_pct: f32,
+    pub life_support_level: String,
+    pub status_text: String,
+}
+
+impl Default for MissionTimerPayload {
+    fn default() -> Self {
+        Self {
+            elapsed_secs: 0,
+            elapsed_str: "00:00".into(),
+            state: "idle".into(),
+            mode: "normal".into(),
+            life_support_pct: 0.0,
+            life_support_level: "unknown".into(),
+            status_text: "等待任务开始".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppStatePayload {
     pub normal_fissures: Vec<Fissure>,
     pub hard_fissures: Vec<Fissure>,
@@ -35,4 +60,5 @@ pub struct AppStatePayload {
     pub cycles: Vec<CycleInfo>,
     pub last_update: String,
     pub countdown_secs: u32,
+    pub mission_timer: MissionTimerPayload,
 }
