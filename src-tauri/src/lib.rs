@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::RwLock as StdRwLock;
 use std::time::Duration;
 use state::{AppState, SharedState};
-use models::AppStatePayload;
+use models::{AppStatePayload, MissionTimerPayload};
 use config::{AppConfig, load_config, save_config};
 use api::{fetch_worldstate, parse_fissures, parse_cycles, fmt_remain, now_ms};
 use tauri::{
@@ -46,6 +46,7 @@ fn build_payload(state: &AppState) -> AppStatePayload {
         cycles,
         last_update: state.last_update.clone(),
         countdown_secs: state.countdown_secs,
+        mission_timer: MissionTimerPayload::default(),
     }
 }
 
