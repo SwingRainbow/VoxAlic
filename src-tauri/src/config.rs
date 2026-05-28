@@ -44,6 +44,20 @@ pub struct MissionTimerConfig {
     pub fissure_roi: ROISettings,
     #[serde(default = "default_life_support_roi")]
     pub life_support_roi: ROISettings,
+    #[serde(default = "default_ocr_interval")]
+    pub ocr_interval_secs: u32,
+    #[serde(default = "default_true")]
+    pub checkpoint_auto_focus: bool,
+    #[serde(default = "default_true")]
+    pub hp_alert_enabled: bool,
+    #[serde(default = "default_fissure_hp_roi")]
+    pub fissure_hp_roi: ROISettings,
+    #[serde(default = "default_true")]
+    pub strip_frame: bool,
+    #[serde(default)]
+    pub selected_hwnd: usize,
+    #[serde(default = "default_window_title")]
+    pub window_title: String,
 }
 
 fn default_timer_mode() -> String { "normal".into() }
@@ -54,6 +68,13 @@ fn default_life_support_roi() -> ROISettings {
     ROISettings { y: life_support_y(), w: life_support_w(), h: life_support_h(), ..Default::default() }
 }
 
+fn default_ocr_interval() -> u32 { 2 }
+fn default_true() -> bool { true }
+fn default_fissure_hp_roi() -> ROISettings {
+    ROISettings { y: 0.45, w: 0.15, h: 0.03, ..Default::default() }
+}
+fn default_window_title() -> String { "Warframe".into() }
+
 impl Default for MissionTimerConfig {
     fn default() -> Self {
         Self {
@@ -61,6 +82,13 @@ impl Default for MissionTimerConfig {
             normal_roi: ROISettings::default(),
             fissure_roi: default_fissure_roi(),
             life_support_roi: default_life_support_roi(),
+            ocr_interval_secs: default_ocr_interval(),
+            checkpoint_auto_focus: default_true(),
+            hp_alert_enabled: default_true(),
+            fissure_hp_roi: default_fissure_hp_roi(),
+            strip_frame: default_true(),
+            selected_hwnd: 0,
+            window_title: default_window_title(),
         }
     }
 }
