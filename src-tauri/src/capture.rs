@@ -1,12 +1,13 @@
-use windows::core::PCWSTR;
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateCompatibleBitmap, SelectObject, DeleteDC,
     DeleteObject, GetDIBits, BITMAPINFO,
     BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, GetDC, ReleaseDC,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowW, GetWindowRect, PW_RENDERFULLCONTENT,
+    GetWindowRect, PW_RENDERFULLCONTENT,
 };
+
+use crate::window;
 use windows::Win32::Graphics::Dwm::{
     DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS,
 };
@@ -30,19 +31,22 @@ pub struct ROIConfig {
     pub h: f64,
 }
 
-/// Capture a region of interest (ROI) from the Warframe game window.
+/// Capture a region of interest (ROI) from the specified window.
 ///
-/// All coordinates (`x`, `y`, `w`, `h`) are expressed as fractions of the window
-/// dimensions in the range 0.0–1.0. For example, `x=0.25, y=0.0, w=0.5, h=1.0`
-/// captures the middle half of the window from top to bottom.
+/// `hwnd_raw` is the raw window handle (as returned by `HWND.0 as isize`).
+/// All ROI coordinates (`x`, `y`, `w`, `h`) are expressed as fractions of the
+/// window dimensions in the range 0.0–1.0. For example, `x=0.25, y=0.0, w=0.5,
+/// h=1.0` captures the middle half of the window from top to bottom.
 ///
 /// The returned pixel buffer contains **BGR** triplets (3 bytes per pixel).
-/// Returns `None` if the Warframe window cannot be found, any GDI/DWM call
-/// fails, or the ROI parameters are out of bounds.
-pub fn capture_roi(roi: &ROIConfig) -> Option<(Vec<u8>, u32, u32)> {
-    let window_name = to_utf16("Warframe");
-    let hwnd = unsafe { FindWindowW(PCWSTR::null(), PCWSTR(window_name.as_ptr())) }.ok()?;
-    if hwnd.is_invalid() {
+/// Returns `None` if the window is invalid, minimized, any GDI/DWM call fails,
+/// or the ROI parameters are out of bounds.
+pub fn capture_roi(hwnd_raw: isize, roi: &ROIConfig) -> Option<(Vec<u8>, u32, u32)> {
+    let hwnd = windows::Win32::Foundation::HWND(hwnd_raw as *mut _);
+    if !window::is_valid(hwnd_raw) {
+        return None;
+    }
+    if window::is_minimized(hwnd_raw) {
         return None;
     }
 
@@ -168,6 +172,12 @@ pub fn capture_roi(roi: &ROIConfig) -> Option<(Vec<u8>, u32, u32)> {
     Some((roi_pixels, roi_w as u32, roi_h as u32))
 }
 
-fn to_utf16(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
+/// Capture a region of interest, optionally stripping non-16:9 frame borders.
+pub fn capture_roi_stripped(hwnd: isize, roi: &ROIConfig, strip_frame: bool) -> Option<(Vec<u8>, u32, u32)> {
+    let (pixels, w, h) = capture_roi(hwnd, roi)?;
+    if strip_frame {
+        Some(window::strip_frame(&pixels, w, h, 16.0 / 9.0))
+    } else {
+        Some((pixels, w, h))
+    }
 }
