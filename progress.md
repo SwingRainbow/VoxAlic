@@ -111,3 +111,30 @@ e2e0c05   feat: add API layer — fetch, parse fissures and cycles
 751cd88   feat: add data models (Fissure, CycleInfo, AppStatePayload)
 151657f   Initial scaffold — Tauri v2 + Vanilla TS + Rust deps
 ```
+
+## 2026-05-28 会话 — Batch A 任务计时完善
+
+- [x] 窗口枚举与管理 → `window.rs` (EnumWindows, 标题/PID 过滤, 状态检查)
+- [x] 前端窗口选择器 → 下拉框选择目标 Warframe 窗口
+- [x] 日志面板 → `log.rs` (info/warn/error/success, mpsc → event, 500条上限)
+- [x] 单次截图 → `single_capture` 命令, 返回 base64 PNG
+- [x] 双时间显示 → 双 ROI (自己 HP + 队友 HP), 前端双卡片
+- [x] 截点倒计时 → 5/10/15/20min 检测, 30s 锁定 + 倒计时文案
+- [x] 识别率 → 连续 N 采样, 成功/总数比率, payload 推送
+- [x] 弹窗开关 → `checkpoint_popup` 配置项, 设置面板控制
+- [x] 构建验证通过，tag v0.3.1
+
+### 产物
+- `tauri-warframe-monitor.exe` (29.4 MB)
+- `Warframe Monitor_0.3.0_x64-setup.exe` (NSIS)
+- `Warframe Monitor_0.3.0_x64_en-US.msi`
+
+### Git 提交历史 (本会话新增)
+```
+7870b0d feat: complete timer UI — window select, log, dual time, checkpoint, toggles
+710a905 feat: wire list_windows, select_window, single_capture, log forwarding
+4ddadb4 feat: add log channel, detection rate, single capture, auto-resume, dual HP ROI
+c73b178 feat: capture_roi accepts HWND parameter, add window state checks and strip_frame
+009453a feat: add window enumeration and management module
+8a571d4 feat: add OCR interval, toggles, dual HP ROI to config
+```

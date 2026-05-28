@@ -75,3 +75,39 @@
 - OCR 轮询跑在独立 std::thread（2s 间隔），不阻塞 tokio
 - 前端命令通过 mpsc channel 发送 TimerCommand
 - 现成 1s tokio tick 每 tick 调用 update_elapsed 并推送 event
+
+## Batch A 改进 — 任务计时完善 (2026-05-28)
+
+### 窗口管理
+- 新增 `window.rs` — Win32 `EnumWindows` 枚举桌面窗口，按标题 + PID 过滤
+- 前端下拉框选择目标窗口，调用 `list_windows` → `select_window(hwnd)` 命令
+- `capture_roi()` 接受 HWND 参数，所有截图命令使用选定窗口句柄
+- 窗口状态检查：无效 HWND / 最小化 / 不可见 时返回错误状态，前端灰度显示
+- `strip_frame()` 去掉窗口标题栏和边框，纯客户区截图用于 OCR
+
+### 日志面板
+- 新增 `log.rs` — 前端日志通道，支持 `info` / `warn` / `error` / `success` 四级标签
+- 后端通过 mpsc channel 推送日志条目到 Tauri event，前端滚动日志面板
+- 记录：OCR 识别结果、截图状态、窗口变更、维生检测、截点触发
+- 日志最多保留 500 条，自动滚动至底部
+
+### 双 ROI 双时间
+- AppConfig 扩展 `hp_roi` 和 `teammate_roi` 两组 HP 区域
+- 配置增加 `ocr_interval_ms`（截图间隔）、`recognition_rate_samples`（识别率采样数）
+- 前端显示双时间：自己 HP 时间 + 队友 HP 时间
+
+### 截点倒计时
+- 检测到 OCR 值接近 5:00 / 10:00 / 15:00 / 20:00 整分钟截点时，30s 锁定期
+- 锁定期间显示倒计时文案 "[截点名称] 倒计时 XXs"
+- 5 分钟截点到期后自动恢复为 Running 状态
+
+### 识别率
+- 连续 N 次 OCR 检测中，成功解析的比率计算为 `recognition_rate`
+- payload 中推送识别率百分比，前端进度条/文本显示
+- 连续失败时前端状态变灰提示
+
+### 弹窗开关
+- AppConfig 新增 `checkpoint_popup` 布尔开关
+- 前端设置面板支持开关控制截点到期时是否弹窗提醒
+- 弹窗使用 Tauri dialog API (info/confirm)
+
