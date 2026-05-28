@@ -5,6 +5,7 @@ mod mission_timer;
 mod models;
 mod ocr;
 mod state;
+mod window;
 
 use std::sync::Arc;
 use std::sync::RwLock as StdRwLock;
