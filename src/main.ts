@@ -29,6 +29,16 @@ interface CycleInfo {
   is_day: boolean;
 }
 
+interface MissionTimerPayload {
+  elapsed_secs: number;
+  elapsed_str: string;
+  state: string;
+  mode: string;
+  life_support_pct: number;
+  life_support_level: string;
+  status_text: string;
+}
+
 interface AppStatePayload {
   normal_fissures: Fissure[];
   hard_fissures: Fissure[];
@@ -36,6 +46,7 @@ interface AppStatePayload {
   cycles: CycleInfo[];
   last_update: string;
   countdown_secs: number;
+  mission_timer: MissionTimerPayload;
 }
 
 // ── Tier colors (match Python original) ──
@@ -86,6 +97,25 @@ function getFilteredFissures(): Fissure[] {
     if (type && f.mission_type !== type) return false;
     return true;
   });
+}
+
+function renderTimer(t: MissionTimerPayload) {
+  document.getElementById('timer-digits')!.textContent = t.elapsed_str;
+  const statusEl = document.getElementById('timer-status')!;
+  statusEl.textContent = t.status_text;
+  statusEl.className = 'timer-status';
+  if (t.state === 'checkpoint') {
+    statusEl.classList.add('checkpoint');
+  }
+
+  const lsBar = document.getElementById('ls-bar-fill')!;
+  lsBar.style.width = `${t.life_support_pct}%`;
+  lsBar.className = 'ls-bar-fill ' + t.life_support_level;
+  document.getElementById('ls-pct')!.textContent =
+    t.life_support_pct > 0 ? `${t.life_support_pct.toFixed(0)}%` : '--';
+
+  const modeRadios = document.getElementsByName('timer-mode') as NodeListOf<HTMLInputElement>;
+  modeRadios.forEach(r => { r.checked = r.value === t.mode; });
 }
 
 function renderFissures() {
@@ -140,6 +170,7 @@ function handleUpdate(payload: AppStatePayload) {
   renderCycles(payload.cycles);
   updateFilters();
   renderFissures();
+  renderTimer(payload.mission_timer);
 }
 
 // ── Event listeners ──
@@ -182,6 +213,26 @@ window.addEventListener('DOMContentLoaded', () => {
   // Settings: save on change
   closeToggle.addEventListener('change', () => {
     invoke('set_config', { config: { close_to_tray: closeToggle.checked } });
+  });
+
+  // Timer: start/stop/reset buttons
+  document.getElementById('btn-timer-start')!.addEventListener('click', () => {
+    invoke('timer_command', { command: 'start' });
+  });
+  document.getElementById('btn-timer-stop')!.addEventListener('click', () => {
+    invoke('timer_command', { command: 'stop' });
+  });
+  document.getElementById('btn-timer-reset')!.addEventListener('click', () => {
+    invoke('timer_command', { command: 'reset' });
+  });
+
+  // Timer: mode radio
+  document.querySelectorAll('input[name="timer-mode"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      if ((radio as HTMLInputElement).checked) {
+        invoke('timer_command', { command: 'set_mode', mode: (radio as HTMLInputElement).value });
+      }
+    });
   });
 
   // Tauri events
