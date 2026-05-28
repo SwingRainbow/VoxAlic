@@ -10,9 +10,12 @@ use std::sync::Arc;
 use std::sync::RwLock as StdRwLock;
 use std::time::Duration;
 use state::{AppState, SharedState};
-use models::{AppStatePayload, MissionTimerPayload};
+use models::AppStatePayload;
 use config::{AppConfig, load_config, save_config};
 use api::{fetch_worldstate, parse_fissures, parse_cycles, fmt_remain, now_ms};
+use std::sync::mpsc;
+use mission_timer::{MissionTimerState, TimerCommand, start_timer_thread};
+use ocr::DigitTemplates;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -21,7 +24,7 @@ use tauri::{
 
 const REFRESH_SEC: u32 = 1800;
 
-fn build_payload(state: &AppState) -> AppStatePayload {
+fn build_payload(state: &AppState, timer_state: &MissionTimerState) -> AppStatePayload {
     let mut normal = state.normal_fissures.clone();
     let mut hard = state.hard_fissures.clone();
     let mut storms = state.storm_fissures.clone();
@@ -47,12 +50,12 @@ fn build_payload(state: &AppState) -> AppStatePayload {
         cycles,
         last_update: state.last_update.clone(),
         countdown_secs: state.countdown_secs,
-        mission_timer: MissionTimerPayload::default(),
+        mission_timer: timer_state.payload.clone(),
     }
 }
 
 #[tauri::command]
-async fn refresh_now(state: tauri::State<'_, SharedState>, app: tauri::AppHandle) -> Result<(), String> {
+async fn refresh_now(state: tauri::State<'_, SharedState>, timer_state: tauri::State<'_, MissionTimerShared>, app: tauri::AppHandle) -> Result<(), String> {
     let data = fetch_worldstate().await?;
     let (normal, hard, storms) = parse_fissures(&data);
     let cycles = parse_cycles(&data);
@@ -66,12 +69,17 @@ async fn refresh_now(state: tauri::State<'_, SharedState>, app: tauri::AppHandle
         s.last_update = now_str;
         s.countdown_secs = REFRESH_SEC;
     }
-    let payload = { let s = state.read().await; build_payload(&s) };
+    let payload = {
+        let s = state.read().await;
+        let t = timer_state.read().unwrap();
+        build_payload(&s, &t)
+    };
     let _ = app.emit("worldstate-update", payload);
     Ok(())
 }
 
 type SharedConfig = Arc<StdRwLock<AppConfig>>;
+type MissionTimerShared = Arc<StdRwLock<MissionTimerState>>;
 
 #[tauri::command]
 fn get_config(cfg: tauri::State<'_, SharedConfig>) -> AppConfig {
@@ -86,6 +94,22 @@ fn set_config(cfg: tauri::State<'_, SharedConfig>, config: AppConfig, app: tauri
     Ok(())
 }
 
+#[tauri::command]
+fn timer_command(
+    cmd_tx: tauri::State<'_, mpsc::Sender<TimerCommand>>,
+    command: String,
+    mode: Option<String>,
+) -> Result<(), String> {
+    let cmd = match command.as_str() {
+        "start" => TimerCommand::Start,
+        "stop" => TimerCommand::Stop,
+        "reset" => TimerCommand::Reset,
+        "set_mode" => TimerCommand::SetMode(mode.unwrap_or_else(|| "normal".into())),
+        _ => return Err(format!("Unknown command: {}", command)),
+    };
+    cmd_tx.send(cmd).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -97,8 +121,18 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir().expect("app data dir");
             let config: SharedConfig = Arc::new(StdRwLock::new(load_config(&app_data_dir)));
 
+            // Load digit templates for OCR
+            let templates_arc = Arc::new(DigitTemplates::load());
+
+            // Mission timer shared state + command channel
+            let timer_state: MissionTimerShared = Arc::new(StdRwLock::new(MissionTimerState::new()));
+            let timer_config = config.clone();
+            let timer_shared = timer_state.clone();
+            let cmd_tx = start_timer_thread(timer_shared, timer_config, templates_arc);
+
             // Background fetch loop (every REFRESH_SEC)
             let fetch_state = state.clone();
+            let fetch_timer = timer_state.clone();
             let fetch_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 // Do initial fetch immediately
@@ -117,7 +151,11 @@ pub fn run() {
                             s.countdown_secs = REFRESH_SEC;
                         }
                     }
-                    let payload = { let s = fetch_state.read().await; build_payload(&s) };
+                    let payload = {
+                        let s = fetch_state.read().await;
+                        let t = fetch_timer.read().unwrap();
+                        build_payload(&s, &t)
+                    };
                     let _ = fetch_handle.emit("worldstate-update", payload);
                 }
                 // Then loop
@@ -138,13 +176,18 @@ pub fn run() {
                             s.countdown_secs = REFRESH_SEC;
                         }
                     }
-                    let payload = { let s = fetch_state.read().await; build_payload(&s) };
+                    let payload = {
+                        let s = fetch_state.read().await;
+                        let t = fetch_timer.read().unwrap();
+                        build_payload(&s, &t)
+                    };
                     let _ = fetch_handle.emit("worldstate-update", payload);
                 }
             });
 
             // Per-second tick
             let tick_state = state.clone();
+            let tick_timer = timer_state.clone();
             let tick_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let mut tick = tokio::time::interval(Duration::from_secs(1));
@@ -153,7 +196,12 @@ pub fn run() {
                     let payload = {
                         let mut s = tick_state.write().await;
                         s.countdown_secs = s.countdown_secs.saturating_sub(1);
-                        build_payload(&s)
+                        {
+                            let mut t = tick_timer.write().unwrap();
+                            t.update_elapsed();
+                        }
+                        let t = tick_timer.read().unwrap();
+                        build_payload(&s, &t)
                     };
                     let _ = tick_handle.emit("tick-update", payload);
                 }
@@ -170,6 +218,7 @@ pub fn run() {
                 .build()?;
 
             let tray_state = state.clone();
+            let tray_timer = timer_state.clone();
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
@@ -182,6 +231,7 @@ pub fn run() {
                     }
                     "refresh" => {
                         let state = tray_state.clone();
+                        let timer = tray_timer.clone();
                         let handle = app.clone();
                         tauri::async_runtime::spawn(async move {
                             if let Ok(data) = fetch_worldstate().await {
@@ -197,7 +247,11 @@ pub fn run() {
                                     s.last_update = now_str;
                                     s.countdown_secs = REFRESH_SEC;
                                 }
-                                let payload = { let s = state.read().await; build_payload(&s) };
+                                let payload = {
+                                    let s = state.read().await;
+                                    let t = timer.read().unwrap();
+                                    build_payload(&s, &t)
+                                };
                                 let _ = handle.emit("worldstate-update", payload);
                             }
                         });
@@ -236,9 +290,11 @@ pub fn run() {
 
             app.manage(state);
             app.manage(config);
+            app.manage(timer_state);
+            app.manage(cmd_tx);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config])
+        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, timer_command])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
