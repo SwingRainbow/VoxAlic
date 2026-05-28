@@ -128,7 +128,8 @@ impl MissionTimerState {
                 let last_secs = parse_time_to_secs(last_ocr);
                 let wall_delta = last_inst.elapsed().as_secs() as i64;
                 let ocr_delta = ocr_secs as i64 - last_secs as i64;
-                (ocr_delta - wall_delta).abs() <= 30
+                let diff = ocr_delta - wall_delta;
+                diff >= -10 && diff <= 30
             } else {
                 let wall = self.payload.elapsed_secs;
                 (ocr_secs as i64 - wall as i64).abs() <= 60
