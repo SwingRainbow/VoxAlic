@@ -57,37 +57,86 @@
   </div>
 
   <div id="tab-timer" class="tab-content">
-    <div class="timer-container">
-      <div class="timer-display">
-        <div class="timer-digits" id="timer-digits">0:00</div>
-        <div class="timer-status" id="timer-status">未启动</div>
-      </div>
+    <!-- Window selection bar -->
+    <div class="timer-window-bar">
+      <label class="timer-window-label">游戏窗口:</label>
+      <select id="window-select" class="window-select">
+        <option value="0">请点击"刷新窗口"扫描...</option>
+      </select>
+      <button class="timer-btn-sm" id="btn-refresh-windows">刷新窗口</button>
+      <span class="window-count" id="window-count"></span>
+    </div>
 
-      <div class="timer-controls">
-        <label class="timer-mode-label">模式:</label>
-        <label class="timer-radio">
-          <input type="radio" name="timer-mode" value="normal" checked />
-          <span>普通</span>
-        </label>
-        <label class="timer-radio">
-          <input type="radio" name="timer-mode" value="fissure" />
-          <span>裂缝</span>
-        </label>
-      </div>
-
-      <div class="timer-buttons">
-        <button class="timer-btn start" id="btn-timer-start">开始</button>
-        <button class="timer-btn stop" id="btn-timer-stop">暂停</button>
-        <button class="timer-btn reset" id="btn-timer-reset">重置</button>
-      </div>
-
-      <div class="life-support-bar">
-        <div class="ls-label">维生系统</div>
-        <div class="ls-bar-track">
-          <div class="ls-bar-fill" id="ls-bar-fill" style="width:100%"></div>
+    <div class="timer-main">
+      <!-- Left: Timer display -->
+      <div class="timer-left">
+        <div class="timer-display">
+          <div class="timer-digits-label">同步时间</div>
+          <div class="timer-digits" id="timer-digits">0:00</div>
+          <div class="timer-ocr-label">识别时间</div>
+          <div class="timer-ocr-digits" id="timer-ocr-digits">--:--</div>
+          <div class="timer-status" id="timer-status">未启动</div>
+          <div class="timer-rate" id="timer-rate"></div>
         </div>
-        <div class="ls-pct" id="ls-pct">--</div>
+
+        <div class="timer-next-checkpoint" id="next-checkpoint">
+          下一节点: <span id="cp-target">5:00</span> (还剩 <span id="cp-remain">--</span>)
+        </div>
       </div>
+
+      <!-- Right: Controls + Life support -->
+      <div class="timer-right">
+        <div class="timer-controls">
+          <label class="timer-mode-label">模式:</label>
+          <label class="timer-radio">
+            <input type="radio" name="timer-mode" value="normal" checked />
+            <span>普通</span>
+          </label>
+          <label class="timer-radio">
+            <input type="radio" name="timer-mode" value="fissure" />
+            <span>裂缝</span>
+          </label>
+        </div>
+
+        <div class="timer-interval">
+          <label>OCR 间隔: <input type="number" id="ocr-interval" min="1" max="30" value="2" style="width:50px" /> 秒</label>
+        </div>
+
+        <div class="timer-toggles">
+          <label class="timer-check">
+            <input type="checkbox" id="toggle-checkpoint-focus" checked />
+            <span>节点弹回游戏</span>
+          </label>
+          <label class="timer-check">
+            <input type="checkbox" id="toggle-hp-alert" checked />
+            <span>维生≤20%弹窗</span>
+          </label>
+        </div>
+
+        <div class="timer-buttons">
+          <button class="timer-btn start" id="btn-timer-start">开始监控</button>
+          <button class="timer-btn stop" id="btn-timer-stop">暂停</button>
+          <button class="timer-btn reset" id="btn-timer-reset">重置</button>
+          <button class="timer-btn single" id="btn-single-capture">📷 单次</button>
+        </div>
+
+        <div class="life-support-bar">
+          <div class="ls-label">维生系统</div>
+          <div class="ls-bar-track">
+            <div class="ls-bar-fill" id="ls-bar-fill" style="width:100%"></div>
+          </div>
+          <div class="ls-pct" id="ls-pct">--</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Log panel -->
+    <div class="timer-log-panel">
+      <div class="log-header">
+        <span>日志</span>
+        <button class="timer-btn-sm" id="btn-clear-log">清空</button>
+      </div>
+      <div class="log-content" id="log-content"></div>
     </div>
   </div>
 
