@@ -19,7 +19,7 @@
 
 | # | 规则 | 原因 |
 |---|------|------|
-| 1 | **绝不提交私钥** `warframe-monitor.key`（密码 `[REDACTED]`）。已在 `.gitignore`。 | 这是 Tauri 更新签名私钥，泄露=别人能伪造更新包。 |
+| 1 | **绝不提交私钥** `warframe-monitor.key`（密码见用户密码管理器）。已在 `.gitignore`。 | 这是 Tauri 更新签名私钥，泄露=别人能伪造更新包。 |
 | 2 | **不要手动 `git push gitee`**。Gitee 由 CI 全权 force-push（代码+tag+latest.json+release）。你只 push `origin`(GitHub)。 | 手动推会和 CI 打架，覆盖 CI 生成的 Gitee `latest.json`。 |
 | 3 | **构建可分发 exe 必须用 `npx tauri build`**，不能用裸 `cargo build --release`。 | Tauri v2 用 `custom-protocol` cargo feature 区分 dev/prod 前端。裸 cargo 构建出的是 **dev 模式 exe**，运行时去连 `localhost:1420` → 用户看到"localhost 拒绝连接"。详见 CLAUDE.md「Building a distributable exe」。 |
 | 4 | **改 `CLAUDE.md` 要同步 `AGENTS.md`**（后者是给 Codex 的镜像）；改功能要同步 `CODE_NOTES.md`。 | 多份文档要一致，否则下一个 AI 读到过期信息。 |
@@ -39,11 +39,11 @@
 | Secret 名 | 用途 |
 |-----------|------|
 | `TAURI_SIGNING_PRIVATE_KEY` | 更新包签名私钥内容 |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 私钥密码（即 `[REDACTED]`） |
-| `GITEE_TOKEN` | Gitee API token，用于推代码/建 release。当前值 `[REDACTED]`（用户选择**不重置**）。 |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 私钥密码（明文存用户密码管理器，不写在此） |
+| `GITEE_TOKEN` | Gitee API token，用于推代码/建 release。值只存 GitHub Secret + 用户密码管理器，**不写在仓库任何文件里**。 |
 
 ### 本地私钥
-- `warframe-monitor.key`（密码 `[REDACTED]`）——本地签名用，**已 gitignore，永不提交**。
+- `warframe-monitor.key`（密码见密码管理器）——本地签名用，**已 gitignore，永不提交**。
 
 ---
 
