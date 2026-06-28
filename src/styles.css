@@ -895,6 +895,14 @@ tr.expiring td:last-child { color: var(--warn); font-weight: bold; }
   flex-wrap: wrap;
 }
 .alert-method-label { font-size: 12px; color: var(--dim); }
+.radio-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
 
 /* ROI calibration panel (collapsible) */
 .calib-panel {

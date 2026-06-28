@@ -521,10 +521,30 @@ struct UpdateInfo {
     notes: String,
 }
 
-#[tauri::command]
-async fn check_for_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
+/// Build an updater pointed at the chosen release source. `"gitee"` checks the
+/// Gitee raw `latest.json` (fast in China); any other value falls back to
+/// GitHub. The pubkey + signature verification are inherited from config, and
+/// the same key signs both mirrors so either source verifies.
+fn build_source_updater(
+    app: &tauri::AppHandle,
+    source: &str,
+) -> Result<tauri_plugin_updater::Updater, String> {
     use tauri_plugin_updater::UpdaterExt;
-    let updater = app.updater().map_err(|e| e.to_string())?;
+    let endpoint = match source {
+        "gitee" => "https://gitee.com/Swing_Rainbow/vox-alic/raw/master/latest.json",
+        _ => "https://github.com/SwingRainbow/VoxAlic/releases/latest/download/latest.json",
+    };
+    let url = url::Url::parse(endpoint).map_err(|e| e.to_string())?;
+    app.updater_builder()
+        .endpoints(vec![url])
+        .map_err(|e| e.to_string())?
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn check_for_update(app: tauri::AppHandle, source: String) -> Result<Option<UpdateInfo>, String> {
+    let updater = build_source_updater(&app, &source)?;
     match updater.check().await {
         Ok(Some(u)) => Ok(Some(UpdateInfo {
             version: u.version.clone(),
@@ -536,9 +556,8 @@ async fn check_for_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, S
 }
 
 #[tauri::command]
-async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri_plugin_updater::UpdaterExt;
-    let updater = app.updater().map_err(|e| e.to_string())?;
+async fn install_update(app: tauri::AppHandle, source: String) -> Result<(), String> {
+    let updater = build_source_updater(&app, &source)?;
     if let Some(update) = updater.check().await.map_err(|e| e.to_string())? {
         update.download_and_install(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
         app.exit(0);

@@ -638,8 +638,9 @@ function handleUpdate(payload: AppStatePayload) {
 window.addEventListener('DOMContentLoaded', () => {
   // Lock the 任务计时 tab in production builds (the shipped installer) but keep
   // it usable during local development (`tauri dev`). Vite sets PROD only for
-  // `tauri build` output.
-  if ((import.meta as any).env?.PROD) {
+  // `tauri build` output. A self-use "unlocked" installer can be produced by
+  // building with VITE_UNLOCK_TIMER=1 (keeps the timer enabled in a prod build).
+  if ((import.meta as any).env?.PROD && (import.meta as any).env?.VITE_UNLOCK_TIMER !== '1') {
     const timerTab = document.querySelector('.tab-btn[data-tab="timer"]') as HTMLButtonElement | null;
     if (timerTab) {
       timerTab.classList.add('locked');
@@ -825,10 +826,12 @@ window.addEventListener('DOMContentLoaded', () => {
   getVersion().then(v => {
     document.getElementById('update-cur-version')!.textContent = `当前版本 ${v}`;
   });
+  const updateSource = (): string =>
+    (document.querySelector('input[name="update-source"]:checked') as HTMLInputElement | null)?.value ?? 'gitee';
   checkUpdateBtn.addEventListener('click', () => {
     checkUpdateBtn.disabled = true;
     updateStatus.textContent = '检查中…';
-    invoke<{ version: string; notes: string } | null>('check_for_update')
+    invoke<{ version: string; notes: string } | null>('check_for_update', { source: updateSource() })
       .then(info => {
         if (info) {
           updateStatus.textContent = '';
@@ -850,7 +853,7 @@ window.addEventListener('DOMContentLoaded', () => {
   confirmUpdateBtn.addEventListener('click', () => {
     confirmUpdateBtn.disabled = true;
     updateModalStatus.textContent = '下载中，请稍候…';
-    invoke('install_update')
+    invoke('install_update', { source: updateSource() })
       .catch(err => {
         updateModalStatus.textContent = `❌ ${String(err)}`;
         confirmUpdateBtn.disabled = false;

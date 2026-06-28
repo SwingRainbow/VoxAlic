@@ -39,7 +39,6 @@ _*.py
 _*.json
 pic/
 warframe-bilingual_*.json
-latest.json
 *.png
 
 # Planning/dev docs
