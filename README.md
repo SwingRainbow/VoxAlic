@@ -13,7 +13,8 @@
 
 ## 下载
 
-[Releases](https://github.com/SwingRainbow/VoxAlic/releases/latest)
+- 国内（推荐）：[Gitee Releases](https://gitee.com/Swing_Rainbow/vox-alic/releases)
+- 国际：[GitHub Releases](https://github.com/SwingRainbow/VoxAlic/releases/latest)
 
 ---
 
