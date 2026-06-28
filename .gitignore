@@ -51,3 +51,6 @@ findings.md
 progress.md
 docs/
 AGENTS.md
+
+# CI-generated release notes artifact
+release_notes.txt

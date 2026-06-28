@@ -43,6 +43,24 @@ jobs:
           $v = (Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version
           echo "v=$v" >> $env:GITHUB_OUTPUT
 
+      - name: Extract release notes
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.v }}"
+          $notes = "VoxAlic v$v"
+          if (Test-Path CHANGELOG.md) {
+            $cl = Get-Content CHANGELOG.md -Raw
+            $pat = "(?ms)^##\s+v" + [regex]::Escape($v) + "\s*\r?\n(.*?)(?=^##\s+v|\z)"
+            $m = [regex]::Match($cl, $pat)
+            if ($m.Success) {
+              $body = $m.Groups[1].Value.Trim()
+              if ($body) { $notes = $body }
+            }
+          }
+          [System.IO.File]::WriteAllText("$PWD/release_notes.txt", $notes, (New-Object System.Text.UTF8Encoding($false)))
+          Write-Host "=== release notes ==="
+          Write-Host $notes
+
       - name: Sign installer
         shell: pwsh
         env:
@@ -69,9 +87,10 @@ jobs:
         run: |
           $v = "${{ steps.ver.outputs.v }}"
           $sig = (Get-Content "src-tauri/target/release/bundle/nsis/VoxAlic_${v}_x64-setup.exe.sig" -Raw).Trim()
+          $notes = Get-Content release_notes.txt -Raw
           @{
             version  = $v
-            notes    = "VoxAlic v$v"
+            notes    = $notes
             pub_date = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
             platforms = @{
               "windows-x86_64" = @{
@@ -85,6 +104,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: VoxAlic ${{ steps.ver.outputs.v }}
+          body_path: release_notes.txt
           files: |
             src-tauri/target/release/bundle/nsis/VoxAlic_${{ steps.ver.outputs.v }}_x64-setup.exe
             src-tauri/target/release/bundle/nsis/VoxAlic_${{ steps.ver.outputs.v }}_x64-setup.exe.sig
@@ -101,11 +121,12 @@ jobs:
           $repo = "vox-alic"
           $exe = "src-tauri/target/release/bundle/nsis/VoxAlic_${v}_x64-setup.exe"
           $sig = (Get-Content "$exe.sig" -Raw).Trim()
+          $notes = Get-Content release_notes.txt -Raw
 
           # 1) Gitee latest.json — Gitee download URL + the CI build's signature.
           $json = @{
             version  = $v
-            notes    = "VoxAlic v$v"
+            notes    = $notes
             pub_date = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
             platforms = @{
               "windows-x86_64" = @{
@@ -127,7 +148,7 @@ jobs:
 
           # 3) Create the Gitee release (UTF-8 form-encode to avoid mojibake).
           $name = [System.Uri]::EscapeDataString("VoxAlic v$v")
-          $body = [System.Uri]::EscapeDataString("VoxAlic v$v")
+          $body = [System.Uri]::EscapeDataString($notes)
           $payload = "access_token=$env:GITEE_TOKEN&tag_name=v$v&name=$name&body=$body&target_commitish=master"
           $rel = Invoke-RestMethod -Method Post -Uri "https://gitee.com/api/v5/repos/$owner/$repo/releases" -Body $payload -ContentType "application/x-www-form-urlencoded"
           Write-Host "Gitee release id: $($rel.id)"
