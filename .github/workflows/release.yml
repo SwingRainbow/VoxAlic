@@ -14,6 +14,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -61,7 +63,8 @@ jobs:
           Write-Host "=== NSIS bundle contents ==="
           Get-ChildItem $dir | ForEach-Object { Write-Host $_.Name }
 
-      - name: Generate latest.json
+      # ── GitHub release ──────────────────────────────────────────────────────
+      - name: Generate GitHub latest.json
         shell: pwsh
         run: |
           $v = "${{ steps.ver.outputs.v }}"
@@ -78,7 +81,7 @@ jobs:
             }
           } | ConvertTo-Json -Depth 5 | Out-File "latest.json" -Encoding utf8NoBOM
 
-      - name: Create Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: VoxAlic ${{ steps.ver.outputs.v }}
@@ -86,3 +89,49 @@ jobs:
             src-tauri/target/release/bundle/nsis/VoxAlic_${{ steps.ver.outputs.v }}_x64-setup.exe
             src-tauri/target/release/bundle/nsis/VoxAlic_${{ steps.ver.outputs.v }}_x64-setup.exe.sig
             latest.json
+
+      # ── Gitee mirror + release (CI fully owns the Gitee repo) ────────────────
+      - name: Publish to Gitee
+        shell: pwsh
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          $v = "${{ steps.ver.outputs.v }}"
+          $owner = "Swing_Rainbow"
+          $repo = "vox-alic"
+          $exe = "src-tauri/target/release/bundle/nsis/VoxAlic_${v}_x64-setup.exe"
+          $sig = (Get-Content "$exe.sig" -Raw).Trim()
+
+          # 1) Gitee latest.json — Gitee download URL + the CI build's signature.
+          $json = @{
+            version  = $v
+            notes    = "VoxAlic v$v"
+            pub_date = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+            platforms = @{
+              "windows-x86_64" = @{
+                signature = $sig
+                url = "https://gitee.com/$owner/$repo/releases/download/v$v/VoxAlic_${v}_x64-setup.exe"
+              }
+            }
+          } | ConvertTo-Json -Depth 5
+          [System.IO.File]::WriteAllText("$PWD/latest.json", $json, (New-Object System.Text.UTF8Encoding($false)))
+
+          # 2) Mirror code + Gitee latest.json + tag to Gitee master (force; CI is sole writer).
+          git config user.email "ci@voxalic"
+          git config user.name "VoxAlic CI"
+          git add latest.json
+          git commit -m "chore: gitee latest.json v$v"
+          $giteeUrl = "https://${owner}:${env:GITEE_TOKEN}@gitee.com/$owner/$repo.git"
+          git push --force $giteeUrl HEAD:master
+          git push --force $giteeUrl "v$v"
+
+          # 3) Create the Gitee release (UTF-8 form-encode to avoid mojibake).
+          $name = [System.Uri]::EscapeDataString("VoxAlic v$v")
+          $body = [System.Uri]::EscapeDataString("VoxAlic v$v")
+          $payload = "access_token=$env:GITEE_TOKEN&tag_name=v$v&name=$name&body=$body&target_commitish=master"
+          $rel = Invoke-RestMethod -Method Post -Uri "https://gitee.com/api/v5/repos/$owner/$repo/releases" -Body $payload -ContentType "application/x-www-form-urlencoded"
+          Write-Host "Gitee release id: $($rel.id)"
+
+          # 4) Upload the installer as a release attachment.
+          curl.exe -s -X POST "https://gitee.com/api/v5/repos/$owner/$repo/releases/$($rel.id)/attach_files" -F "access_token=$env:GITEE_TOKEN" -F "file=@$exe"
+          Write-Host "Gitee publish done."
