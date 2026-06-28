@@ -636,9 +636,24 @@ function handleUpdate(payload: AppStatePayload) {
 
 // ── Event listeners ──
 window.addEventListener('DOMContentLoaded', () => {
+  // Lock the 任务计时 tab in production builds (the shipped installer) but keep
+  // it usable during local development (`tauri dev`). Vite sets PROD only for
+  // `tauri build` output.
+  if ((import.meta as any).env?.PROD) {
+    const timerTab = document.querySelector('.tab-btn[data-tab="timer"]') as HTMLButtonElement | null;
+    if (timerTab) {
+      timerTab.classList.add('locked');
+      timerTab.disabled = true;
+      timerTab.title = '该功能暂未开放';
+      timerTab.textContent = '任务计时 🔒';
+    }
+  }
+
   // Tab switching
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
+      // Locked tabs (e.g. 任务计时) are disabled and cannot be activated.
+      if (btn.classList.contains('locked') || (btn as HTMLButtonElement).disabled) return;
       const tab = (btn as HTMLElement).dataset.tab;
       document.querySelectorAll('.tab-btn, .tab-content').forEach(e => e.classList.remove('active'));
       btn.classList.add('active');

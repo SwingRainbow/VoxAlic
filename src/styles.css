@@ -51,6 +51,12 @@ body {
   border-bottom: 2px solid transparent;
 }
 .tab-btn:hover { color: var(--text); background: rgba(255, 255, 255, 0.03); }
+.tab-btn.locked {
+  color: var(--dim);
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.tab-btn.locked:hover { color: var(--dim); background: none; }
 .tab-btn.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
