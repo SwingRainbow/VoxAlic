@@ -459,12 +459,18 @@ body {
   color: var(--dim);
   flex: 1;
 }
+.sub-unified-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border-soft);
+}
+.sub-unified-foot .timer-btn-sm { flex: 0 0 auto; }
 .sub-unified-hint {
-  padding: 7px 14px;
   font-size: 11px;
   color: var(--dim);
   line-height: 1.6;
-  border-top: 1px solid var(--border-soft);
 }
 .alert-rules-list { padding: 4px 12px 6px; }
 .alert-rules-empty {
@@ -561,6 +567,11 @@ td {
 }
 .relic-icon { width: 22px; height: 14px; vertical-align: middle; margin-right: 4px; object-fit: contain; }
 tr.expiring td:last-child { color: var(--warn); font-weight: bold; }
+
+/* 订阅命中的裂缝行高亮（品牌金）—— 与筛选互不冲突，仅作标注 */
+#fissure-table tr.subscribed { outline: 1px solid rgba(255, 185, 41, 0.45); outline-offset: -1px; }
+#fissure-table tr.subscribed td:first-child { border-left: 3px solid #ffb929; }
+.sub-bell { margin-right: 3px; filter: drop-shadow(0 0 3px rgba(255, 185, 41, 0.85)); }
 
 /* ── Settings ── */
 .settings-group {

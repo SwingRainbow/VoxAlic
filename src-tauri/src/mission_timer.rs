@@ -398,11 +398,6 @@ pub fn detect_life_support(pixels: &[u8], width: u32, height: u32) -> f32 {
 }
 
 /// Resolve the target Warframe game window handle by scanning visible windows.
-fn resolve_hwnd(config: &AppConfig) -> isize {
-    let windows = crate::window::list_windows(&config.mission_timer.window_title);
-    windows.first().map(|w| w.hwnd as isize).unwrap_or(0)
-}
-
 /// Spawn the OCR polling thread. Returns the command channel sender.
 pub fn start_timer_thread(
     shared: Arc<std::sync::RwLock<MissionTimerState>>,
@@ -420,7 +415,7 @@ pub fn start_timer_thread(
         // Resolve hwnd at start
         let mut hwnd: isize = {
             let cfg = config.read().unwrap();
-            resolve_hwnd(&cfg)
+            crate::window::resolve_hwnd(&cfg.mission_timer.window_title)
         };
 
         if hwnd == 0 {
@@ -444,7 +439,7 @@ pub fn start_timer_thread(
                 log(&log_tx, "⚠ 窗口已关闭");
                 shared.write().unwrap().payload.window_status = "未检测到游戏窗口".into();
                 let cfg = config.read().unwrap();
-                hwnd = resolve_hwnd(&cfg);
+                hwnd = crate::window::resolve_hwnd(&cfg.mission_timer.window_title);
                 if hwnd != 0 {
                     log(&log_tx, "窗口已重新获取");
                     shared.write().unwrap().payload.window_status = "检测到游戏窗口".into();
@@ -642,7 +637,7 @@ pub fn start_timer_thread(
                     log(&log_tx, "⚠ 连续捕获失败，重新扫描窗口");
                     consecutive_capture_fails = 0;
                     let cfg = config.read().unwrap();
-                    hwnd = resolve_hwnd(&cfg);
+                    hwnd = crate::window::resolve_hwnd(&cfg.mission_timer.window_title);
                     drop(cfg);
                     was_minimized = false;
                     if hwnd != 0 {
@@ -676,7 +671,7 @@ pub fn start_timer_thread(
                 // No target window — retry resolve every 2 seconds
                 std::thread::sleep(Duration::from_secs(2));
                 let cfg = config.read().unwrap();
-                hwnd = resolve_hwnd(&cfg);
+                hwnd = crate::window::resolve_hwnd(&cfg.mission_timer.window_title);
                 if hwnd != 0 {
                     log(&log_tx, "找到游戏窗口");
                     shared.write().unwrap().payload.window_status = "检测到游戏窗口".into();

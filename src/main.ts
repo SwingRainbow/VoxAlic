@@ -268,6 +268,8 @@ function renderBountyPanel(bounties: BountyInfo[]) {
   panel.classList.remove('hidden');
 
   const section = (b: BountyInfo, withClose: boolean) => {
+    // 魔胎之境(Entrati) bounties reward Mother Tokens, not syndicate standing.
+    const standingLabel = b.syndicate === '魔胎之境' ? '母亲石印' : '声望';
     // Single-rotation zones (e.g. 扎里曼/六人组/解剖圣所) have one fixed pool — no A/B/C selector.
     const singleRot = b.jobs.length > 0 && b.jobs.every(j => j.rotations.length <= 1);
     // Only the live active rotation is viewable; the other two are locked.
@@ -294,7 +296,7 @@ function renderBountyPanel(bounties: BountyInfo[]) {
             <span class="bb-num">${i + 1}</span>
             <span class="bb-title">${j.title}</span>
             <span class="bb-lv">等级 ${j.min_level}–${j.max_level}</span>
-            ${j.standing > 0 ? `<span class="bb-standing">声望 ${j.standing}</span>` : ''}
+            ${j.standing > 0 ? `<span class="bb-standing">${standingLabel} ${j.standing}</span>` : ''}
           </div>
           <div class="rw-grid">${grid}</div>
         </div>`;
@@ -438,6 +440,18 @@ function filterFissures(list: Fissure[], tier: string, type: string): Fissure[] 
   });
 }
 
+// Does this fissure match any active 裂缝 subscription rule? Mirrors the backend
+// `check_fissure_alerts` matching so the list highlight reflects what's notified.
+function fissureSubscribed(f: Fissure): boolean {
+  const alerts = currentConfig?.fissure_alerts ?? [];
+  if (!alerts.length) return false;
+  const diff = f.is_hard ? 'hard' : f.is_storm ? 'storm' : 'normal';
+  return alerts.some(a =>
+    (!a.tier || a.tier === f.tier_label) &&
+    (!a.mission_type || a.mission_type === f.mission_type) &&
+    (!a.difficulty || a.difficulty === diff));
+}
+
 function getFilteredFissures(): Fissure[] {
   if (!currentData) return [];
   const tier = (document.getElementById('tier-filter') as HTMLSelectElement).value;
@@ -520,15 +534,18 @@ function renderFissures() {
   if (!currentData) return;
   const filtered = getFilteredFissures();
   const tbody = document.querySelector('#fissure-table tbody')!;
-  tbody.innerHTML = filtered.map(f => `
-    <tr class="${f.is_expiring ? 'expiring' : ''}" style="background:${TIER_BG[f.tier_key] || '#252525'};color:${TIER_FG};">
-      <td><img src="/relics/${f.tier_key}.png" class="relic-icon" alt=""> ${f.tier_label}</td>
+  tbody.innerHTML = filtered.map(f => {
+    const sub = fissureSubscribed(f);
+    const cls = `${f.is_expiring ? 'expiring' : ''}${sub ? ' subscribed' : ''}`.trim();
+    return `
+    <tr class="${cls}" style="background:${TIER_BG[f.tier_key] || '#252525'};color:${TIER_FG};">
+      <td>${sub ? '<span class="sub-bell">🔔</span>' : ''}<img src="/relics/${f.tier_key}.png" class="relic-icon" alt=""> ${f.tier_label}</td>
       <td>${f.node_name}</td>
       <td>${f.planet}</td>
       <td>${f.mission_type}</td>
       <td>${f.remain_str}</td>
-    </tr>
-  `).join('');
+    </tr>`;
+  }).join('');
 
   // Update counts with current filters applied
   const tier = (document.getElementById('tier-filter') as HTMLSelectElement).value;
@@ -892,6 +909,12 @@ window.addEventListener('DOMContentLoaded', () => {
       .catch(err => { alertTestStatus.textContent = String(err); });
   });
 
+  // Test the subscription notification (tray flash + hover popup) without
+  // waiting for a real fissure.
+  document.getElementById('btn-test-notify')?.addEventListener('click', () => {
+    invoke('test_notification');
+  });
+
   // Baro card: click to expand/collapse items table (only when active)
   document.getElementById('baro-card')!.addEventListener('click', () => {
     if (currentData?.baro?.active) {
@@ -908,20 +931,12 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Baro item-name 中文 table: show current count, update from WFCD on demand
+  // Item-name 中文 table: the bundled table refreshes per release, so show the
+  // game version it covers instead of an on-demand update button.
   const itemNamesStatus = document.getElementById('itemnames-status')!;
-  const updateItemNamesBtn = document.getElementById('btn-update-itemnames') as HTMLButtonElement;
-  invoke<number>('item_names_count')
-    .then(n => { itemNamesStatus.textContent = `当前 ${n} 条`; })
+  invoke<string>('game_data_version')
+    .then(v => { itemNamesStatus.textContent = v; })
     .catch(() => { itemNamesStatus.textContent = ''; });
-  updateItemNamesBtn.addEventListener('click', () => {
-    updateItemNamesBtn.disabled = true;
-    itemNamesStatus.textContent = '下载中…（约 50MB，请稍候）';
-    invoke<number>('update_item_names')
-      .then(n => { itemNamesStatus.textContent = `✅ 已更新 ${n} 条`; })
-      .catch(err => { itemNamesStatus.textContent = `❌ ${err}`; })
-      .finally(() => { updateItemNamesBtn.disabled = false; });
-  });
 
   // Log listener
   let logLines: string[] = [];
@@ -1062,6 +1077,8 @@ function renderCycleAlerts(list: CycleAlert[], container: HTMLElement) {
 function saveAlerts() {
   if (!currentConfig) return;
   invoke('set_config', { config: currentConfig });
+  // Refresh the fissure list so subscription highlights track the rule change.
+  if (currentData) renderFissures();
 }
 
 function setupAlerts(): () => void {

@@ -27,4 +27,13 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+  // Two HTML entry points: the main app and the tray notification popup.
+  build: {
+    rollupOptions: {
+      input: {
+        main: "index.html",
+        notify: "notify.html",
+      },
+    },
+  },
 }));

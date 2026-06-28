@@ -1763,6 +1763,7 @@ pub fn parse_arbitration(now_ms: i64) -> Option<ArbitrationInfo> {
 pub async fn fetch_worldstate() -> Result<Value, String> {
     let client = reqwest::Client::builder()
         .user_agent("Warframe/1.0")
+        .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| e.to_string())?;
 

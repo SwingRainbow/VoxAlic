@@ -221,9 +221,158 @@
 
 **验证**：`cargo check` 零警告；`tsc --noEmit` 通过；`npx tauri build` 出 MSI/NSIS 成功（共 3 次构建）。游戏内验证待用户实测。
 
+## 阶段 41–45 — 分发打磨（2026-06-28，已发布 v1.0.1）
+
+软件已改名 **VoxAlic**，仓库 https://github.com/SwingRainbow/VoxAlic 。本日围绕"可对外分发"做了一轮打磨：
+
+| 阶段 | 状态 | 说明 |
+|------|------|------|
+| 41. v1.0.0 发布 | ✅ | GitHub Actions 工作流稳定（签名用 `npx tauri signer sign -f` 文件方式，**勿改回 env var**）。Release 产出 exe+sig+latest.json |
+| 42. 品牌图标 | ✅ | ChatGPT DALL-E 六边形星形编织结 → Python 重上色 **#FFB929 金→#562583 紫渐变 + 透明背景** → `npx tauri icon` 生成全尺寸。**关键坑见下** |
+| 43. 任务计时锁定 | ✅ | **仅生产版锁定，开发版可用**：`src/main.ts` DOMContentLoaded 用 `(import.meta as any).env?.PROD` 判断，给 timer tab 加 `.locked`+disabled+🔒；click handler 拦截 locked/disabled。`.tab-btn.locked` 样式在 styles.css。index.html 按钮保持原样（不硬编码） |
+| 44. 单实例 | ✅ | `tauri-plugin-single-instance`（lib.rs 注册，回调 `get_webview_window("main")` → show+set_focus）。第二次点击图标唤起已有窗口而非新开 |
+| 45. v1.0.1 发布 + 更新实测 | ✅ | 版本号三处同步（tauri.conf.json/Cargo.toml/Cargo.lock）→ commit `9ea819b` + tag `v1.0.1` → push 触发 CI。**用户在 1.0.0 实测「检查更新」→ 1.0.1 完美运行** |
+
+### ⚠ 图标嵌入关键坑（务必牢记）
+- **`cargo clean -p voxalic` 清不掉 tauri-build 缓存的图标资源（.res）**，导致重建后 exe 仍嵌入旧图标。**必须完整 `cargo clean`** 才能强制重新嵌入 ICO。
+- 验证方法：`[System.Drawing.Icon]::ExtractAssociatedIcon($exe)` 提取后看图（从全新文件名复制再提取可排除 shell 路径缓存）。
+- 托盘图标来自内嵌 PNG（tauri.conf），Explorer/桌面图标来自 exe 的 PE 资源 ICO——**两者来源不同**，托盘变了不代表 exe 资源变了。
+- Windows 图标缓存顽固：删 `%LOCALAPPDATA%\Microsoft\Windows\Explorer\iconcache*`/`thumbcache*` + 重启 explorer + `ie4uinit -show`；桌面快捷方式 .lnk 单独缓存，删除重建最快。
+
+### 其他踩坑/经验
+- 国内 cargo 慢：`~/.cargo/config.toml` 配 **USTC sparse 镜像** `sparse+https://mirrors.ustc.edu.cn/crates.io-index/`（rsproxy 的 git index URL 已失效）。
+- 快速验证不打安装包：`npx tauri build --no-bundle`。
+- NSIS 安装包文件名默认已含版本号：`VoxAlic_1.0.1_x64-setup.exe`。
+
+### 待办（下阶段，按用户优先级）
+1. **别人电脑实测** — 用户会把安装包发给他人测试，关注 SmartScreen 警告（无商业签名）、WebView2、下载慢。等反馈。
+2. **更新弹窗显示 changelog** — 留到 v1.0.2。UI 已就绪（`update-modal-notes` white-space:pre-wrap + 「稍后再说」按钮），缺口是 `release.yml:71` `notes="VoxAlic v$v"` 写死。方案：建 `CHANGELOG.md`，工作流解析当前版本段 → latest.json notes + release body。
+3. **更新下载加速** — GitHub 对国内慢（安装包 ~60MB）。用户倾向**后续用 Gitee 码云镜像**。备选：国内对象存储 OSS/COS、GitHub 公共代理。现先不弄。
+
+### 安全约束（务必保持）
+- 私钥 `warframe-monitor.key` 已 gitignore，**绝不提交**
+- 密钥密码 `[REDACTED]` → GitHub Secret `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+- GitHub Secrets 为 **Repository** secrets（非 Environment）
+
+## 阶段 46–49 — Gitee 镜像 + 双源更新 + CI 全自动（2026-06-28，已上线 v1.0.4）
+
+| 阶段 | 状态 | 说明 |
+|------|------|------|
+| 46. 安装包瘦身 | ✅ | `tauri.conf.json` `webviewInstallMode`：`offlineInstaller`(203MB) → `downloadBootstrapper`(**8.86MB**)。为上 Gitee（单附件上限 100MB）+ 国内下载体验。Win10/11 多预装 WebView2 |
+| 47. 双源更新（GitHub/Gitee 可选） | ✅ | `lib.rs` `build_source_updater(app, source)` 按 source 切 endpoint：`gitee`→`https://gitee.com/Swing_Rainbow/vox-alic/raw/master/latest.json`，否则 GitHub。`check_for_update`/`install_update` 加 `source: String` 参数。前端加 `name="update-source"` 单选（Gitee 默认），main.ts `updateSource()` 传参。加 `url="2"` 依赖。`latest.json` 从 .gitignore 移除（纳入跟踪） |
+| 48. Gitee 手动发布（v1.0.2/1.0.3） | ✅ | Gitee 仓库 `Swing_Rainbow/vox-alic`，remote 名 `gitee`。手动流程：build→sign→生成 Gitee latest.json→push origin+gitee→Gitee API 建 release（`Invoke-RestMethod` UTF-8 form 编码避免乱码）+ `curl -F` 传附件。验证 raw latest.json + 下载 200 OK |
+| 49. CI 全自动 | ✅ | `release.yml` 加「Publish to Gitee」步：GitHub 发布后 CI 生成 Gitee latest.json → commit + **force-push** 代码+latest.json+tag 到 Gitee（token URL）→ Gitee API 建 release + 传附件。checkout `fetch-depth: 0`。Secret `GITEE_TOKEN`。**v1.0.4 首次全自动，四项验证全通过**（GitHub+Gitee 两边 release+latest.json 均 1.0.4，下载 200） |
+
+### 现行发版流程（三步，CI 全包）
+1. 改版本号三处：`tauri.conf.json` / `Cargo.toml` / `Cargo.lock`
+2. `git push origin master`
+3. `git push origin v1.0.x`（tag）
+
+CI 自动：构建 → 签名 → GitHub Release → Gitee 镜像+发行版+安装包+latest.json。
+
+### ⚠ 关键约束
+- **别再手动 `git push gitee`** —— Gitee 由 CI force-push 全权管理，手动推会冲突/分叉。只推 origin。
+- 本地 nsis 不再自动有新版安装包（云端构建）。需要本地包：`npx tauri build` 或从 release 下载。
+- `GITEE_TOKEN` = `1208ca...`（用户暂未重置，已在聊天明文出现过；若日后泄露顾虑，重置后只更新 GitHub Secret，别贴聊天）。
+
+### 待办
+1. **更新弹窗 changelog** — UI 已就绪，缺口：`release.yml` 两处 notes 都写死 `VoxAlic v{ver}`。方案：建 CHANGELOG.md，CI 发版时解析当前版本段填入 GitHub+Gitee 两边 latest.json 的 notes + release body。
+2. **发给别人实测** — 关注 SmartScreen/WebView2 联网/下载速度。
+3. **双源更新游戏外实测** — 装 1.0.2/1.0.3 → 选 Gitee → 更新到 1.0.4。
+
+## 阶段 50 — 物品库 Gitee 决策 + 本地垃圾清理（2026-06-28）
+
+### 物品库（item_i18n）是否做 Gitee 加速 → 决定不做
+- **内置表**：`src-tauri/resources/baro_zh.json`（1.3MB / 16427 条 `uniqueName→简中`），`item_i18n.rs:17` 用 `include_str!` 编译进 exe，首次离线即用。
+- **三层优先级**：① 用户下载覆盖 `{app_data_dir}/baro_zh.json`（点过检查更新才有）→ ② 内置默认 → ③ `name_from_path()` CamelCase 拆词兜底（显示英文）。
+- **检查更新逻辑**（`item_i18n.rs:84` `update_from_remote`，前端 `main.ts:920`→`update_item_names`）：从 WFCD 官方第三方仓库 GitHub raw 下 i18n.json（51MB），抽 `zh.name` 压紧凑表，落盘+热替换。**数据源是别人的仓库（GitHub raw 写死 `item_i18n.rs:20`），非自有，没法 CI 推 Gitee 镜像。**
+- **结论：不做 Gitee 加速**。低频（只影响发版后 DE 新出物品）+ 内置兜底 + 发版自带新库。用户原话「内置的话每次新版本发布都会更新库，没什么好担心」。
+- ⚠️ 内置表不自动更新（当前文件日期 Jun 1）。"发版即更新库"前提=发版前手动刷新：软件内点检查更新→把 `{app_data_dir}/baro_zh.json` 拷回 `src-tauri/resources/baro_zh.json`→再 build。忘了不致命（有英文兜底）。
+
+### 本地磁盘垃圾清理（不影响 git，删的都是 gitignore 挡着的本地文件）
+- **已删一次性临时数据 ~63MB**：`_all_tmp.json`(51M)、`_deimos_tmp.json`、`_ws_tmp.json`、`warframe-bilingual_2026-06-01.json`。
+- **7 个 `_gen_*.py` 全保留**（bounty/solaris/deimos/zariman/hex/entrati_lab/circuit）：检查后无一冗余，每个对应一个仍在用的赏金奖励资源，是资源生成方式的唯一记录。
+- ⚠️ **副作用**：这 7 个脚本都靠 `json.load(open('_all_tmp.json'))`，删了输入文件后直接跑会报错。未来要刷新赏金表需重下 WFCD all.json 改名放回。**当下零影响**（软件/构建/CI/git 全正常，删的是开发原料不是运行依赖）。
+- 规划文档、截图、`target/`、`node_modules/`、密钥——按用户要求全部未动。
+
+### 未来事项（已记 memory，当下不用管）
+- DE 出新声望/开放区域时会连带新赏金任务+奖励池+新物品。更新路径清单见 memory `reference-new-syndicate-update-path.md`：赏金任务改 `api.rs` BOUNTY_SOURCES、奖励池仿 `_gen_*.py` 生成、物品名刷内置表。现有 6 个 syndicate 是模板。
+
+### memory 更新
+- `project-voxalic-release.md`：加物品库 Gitee 决策段。
+- 新建 `reference-new-syndicate-update-path.md`：新声望更新清单。
+- `MEMORY.md` 索引同步（发布现状行更新到 v1.0.4，新增新声望路径行）。
+
+## 阶段 51 — 开发版重建 + 订阅托盘提醒 + 代码图谱（2026-06-28，dev 已构建，未提交）
+
+本阶段全部在**开发版**（`target/release/voxalic.exe`，`--no-bundle`）上迭代，未打安装包未发版。
+
+### 51.0 开发版/发行版分工（用户约定）
+- **桌面图标 = 安装的发行版**（稳定版）；**`target/release/voxalic.exe` = 测试开发版**，平时改代码都在它上面。
+- 流程：开发版测新功能 → 稳定后才 `npx tauri build` 打包发布。重建开发版用 `npx tauri build --no-bundle`（带 custom-protocol，~1–1.5min）。重建前先 `Stop-Process voxalic`（否则占用 WebView2Loader.dll → os error 32）。
+- 把本地开发版从 1.0.3 重建到 1.0.4（版本号三处已一致）。memory `feedback-dev-vs-release-binaries`。
+
+### 51.1 订阅提醒改造：toast → 托盘闪烁 + 悬停弹窗 + 裂缝标注
+**需求**：三类订阅（裂缝/周期/仲裁）原走右下角 Windows toast（一闪即逝，AFK 回来看不到）→ 改为**持久托盘指示 + 悬停弹窗**；**任务计时提醒保持 toast 不变**。裂缝列表额外把命中订阅的行**标注**出来（条目多，方便找）。
+
+**后端（`lib.rs`）**
+- 新 `SubNotify{kind,icon,title,detail,ts}` + 独立 `notify_tx/rx` 通道。`check_fissure/cycle/arbitration_alerts` 改发 `SubNotify`（不再走 toast 通道）。
+- 托管态：`NotifyList`(Arc<RwLock<Vec<SubNotify>>>) + `FlashFlag`(Arc<AtomicBool>) + `notify_tx`（供测试命令）。
+- 订阅转发线程：累积列表(上限50) + emit `sub-notify` + 置 `FlashFlag=true`。
+- 托盘闪烁线程：读 `FlashFlag`，每 500ms 在 正常/内芯红 帧间切图标。
+- 托盘 `with_id("main")`；事件：**Enter** 显弹窗（emit 当前快照防竞态 + 定位光标上方 + show 不抢焦点）、**Leave** 隐、**左键** 唤主窗+停闪。"notify" 窗失焦自动隐。
+- 命令：`get_notifications`/`clear_notifications`/`test_notification`（注入假提醒，免等真裂缝）。
+- ⚠️ 坑：托盘图标须 `Image::new_owned` 转 owned 才能进 'static 闪烁线程（借用 `default_window_icon` → E0521 app escapes）；托盘 `set_icon`/`set_tooltip` 须 `run_on_main_thread`。
+
+**弹窗（独立窗口）**
+- `tauri.conf.json` 加第二个窗口 `label:"notify"`（transparent/decorations:false/alwaysOnTop/skipTaskbar/visible:false）。
+- 新建 `notify.html`+`src/notify.ts`（暗色卡片列表，`get_notifications` 初始 + listen `sub-notify` + 「清空」）。`vite.config.ts` 改双入口 `rollupOptions.input={main,notify}`。
+
+**前端标注（`main.ts`）**
+- `fissureSubscribed(f)` 镜像后端匹配 → `renderFissures` 命中行加 `.subscribed`（金 #FFB929 左边条+描边）+ 🔔。`saveAlerts` 后重渲裂缝列表。仅裂缝标注，周期/仲裁不标。
+- 设置→订阅底部加「测试提醒效果」`btn-test-notify` → `test_notification`；hint 文案去掉过时的 toast 说法。
+
+**闪烁形态迭代（共 6 版，配色教训见 findings 续43）**：红点 overlay→整图标明灭(透明)→纯红整格→呼吸金光晕→**logo 镂空内芯脉动**(`hole_mask` flood-fill 识别洞)→青白 bloom→**最终：内芯纯亮红 (255,45,45)、`levels=[1.0,0.0]` 亮/暗交替、500ms、bloom 外扩 2px**。用户决定红闪先用着，备选(自动弹窗/整logo变色/FlashWindowEx)未采纳。
+
+**悬停弹窗交互迭代**：初版做成左键点击弹出（且有空内容竞态 bug）→ 用户要"悬停显示、左键唤主窗" → 改 Enter/Leave + Enter 时主动推快照修空白。已知取舍：悬停显示/移开即隐，移进弹窗会触发 Leave 收起 → 只能扫一眼，「清空」够不着（用户接受）。
+
+**验证**：`tsc --noEmit` 通过；`cargo check --features custom-protocol` 通过（修了一次 E0521）；`npx tauri build --no-bundle` 多次成功（notify.html/notify.js 正确产出双入口）。用户暂未久等真裂缝实测，已用测试按钮验证链路。memory `project-subscription-tray-notify`。
+
+### 51.2 代码图谱 `CODE_NOTES.md`（新建，长期维护）
+- 应用户「写一份代码标注文件」要求，新建仓库根 **`CODE_NOTES.md`**：逐块标注全代码功能+联动。含全局联动总览(线程/4通道/4事件/命令/托管态/数据流图)、后端 11 模块函数级说明、前端、「订阅托盘提醒」端到端专题、资源/构建。
+- **用户立规矩**：以后**每加新功能/做新旧联动都要同步更新 CODE_NOTES.md**，作为交付的一部分。memory `feedback-maintain-code-map` + `reference-code-notes-file`。
+
+### memory 更新（本阶段）
+- 新建：`feedback-dev-vs-release-binaries`、`project-subscription-tray-notify`、`reference-code-notes-file`、`feedback-maintain-code-map`。
+- `MEMORY.md` 索引同步。
+
+## 阶段 52 — 全量审查清理 + 物品库版本标注 + 母亲石印（2026-06-28/29，dev 已构建，未提交）
+
+### 52.1 全量代码审查（安全/优化/冗余）
+- **安全（总体良好）**：源码无硬编码密钥/token（grep 干净）；网络全 HTTPS + 默认 TLS 校验，无 `danger_accept_invalid_certs`；更新器固定 endpoint + pubkey 验签、`source` 仅两 URL match 无注入；`unsafe` 仅 Win32/GDI/注册表 FFI。两个低风险提示（未改）：前端 `innerHTML` 21 处不转义（数据源官方 API+翻译表可信，`notify.ts` 已转义）；`tauri.conf` `csp:null`（只加载本地内容，风险低）。
+- **已修（均 clippy 零警告 + 构建通过）**：① 新增 `make_center_pulse_frames` 的 `needless_range_loop` → enumerate；② **冗余**：`resolve_hwnd` 在 lib.rs+mission_timer.rs 两份完全相同 → 合并为 `window::resolve_hwnd(keyword)`，7 调用点统一；③ **健壮性**：两个 reqwest client 无超时 → 加 `timeout`（worldstate 30s、i18n 180s）。
+- **优化建议（未改，留待专门任务）**：前端 `handleUpdate` 在 `tick-update`(每秒)也触发 → renderFissures/Cycles/BountyPanel/Arbitration 每秒全量重建 innerHTML（长列表滚动每秒重置、`<select>` 被打断）。已对 Baro(`baroSig`)/订阅规则(`_lastAlertSig`)防抖，建议同法推广到裂缝表/赏金面板。#1 前端优化点，改动面大需实测。`build_payload` 每 tick 全量 clone、flash 线程 500ms 空转——开销可忽略，不值得改。
+
+### 52.2 物品库改版本标注（替代「检查更新」按钮）
+- **决策**：物品库随发行版走（WFCD 每次游戏更新自动重建、含 zh，研究见 findings 续44），manual 检查更新按钮多余 → **砍按钮**，设置→物品库改只读显示游戏版本名。
+- **版本名手输不自动抓**：标注本意是"物品库覆盖到哪版"，库是发版冻结快照；自动抓 worldState `Events` 新闻拿到的是 live 最新版本 → 比库新、语义错。手输和库严格一致，用户本就每版看版本名。
+- **落地**：`lib.rs` `const GAME_DATA_VERSION="更新 43《Jade 之影：众星》"`（上一版 42《绘影者》）+ `game_data_version()` 命令；前端 `itemnames-status` 显示（最终用户要求**去掉"对应游戏版本"前缀**，只剩版本名本身，靠左侧"物品库"标签说明）。**后端 `update_item_names`/`update_from_remote` 保留**（仅作发版前重生成 `baro_zh.json` 工具，无用户入口）。
+- ⚠️ **发版流程多一步**：发版时改 `GAME_DATA_VERSION` = 当前游戏版本名（连带刷 baro_zh.json + 软件版本号）。
+
+### 52.3 魔胎之境赏金「声望」→「母亲石印」
+- 用户：魔胎之境(Entrati/殁世幽都)赏金实际不给声望，给**母亲石印**(Mother Token)。
+- `main.ts` `renderBountyPanel` 的 `section()` 加 `standingLabel = b.syndicate==='魔胎之境' ? '母亲石印' : '声望'`，chip 用之。其它地点不变；解剖圣所(挂魔胎卡)standing=0 本就隐藏不受影响。
+- ⚠️ **数字 N 待核**：仍用 `xpAmounts` 和（原"声望"那个数）。若游戏里母亲石印是固定小数量（非几千级），数字会偏大不对 → 待用户游戏内核对后定（按数对得上/固定值/不显示数字 三选一）。
+
+### memory 更新（本阶段）
+- `project-voxalic-release` 加「物品库改版本标注」段 + 研究结论。
+- `CODE_NOTES.md` 同步：window.rs 加 `resolve_hwnd`、lib.rs 加 `game_data_version`、物品库按钮移除说明。
+
 ## 给接手者
 
-**当前代码基线**: commit `edc3ed5` (master)
+**当前代码基线**: commit `a93473a` (master, tag `v1.0.4`, GitHub+Gitee 均已发布)
+- `9ea819b` v1.0.1（图标+任务计时锁定+单实例）
+- 历史基线 commit `edc3ed5`
 - `a2b5fc7` 代码（阶段 20–23）
 - `732c6a5` 文档 + `.gitignore`
 - `f135a39` 规划文件同步

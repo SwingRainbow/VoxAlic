@@ -27,16 +27,28 @@ use tauri::{
 
 const REFRESH_SEC: u32 = 1800;
 
-// ── Subscription alert helpers ──────────────────────────────────────────────
+// ── Subscription notifications ───────────────────────────────────────────────
 
-/// Check fissure subscriptions after each worldstate refresh. Sends a toast
-/// for each new matching fissure (keyed by node+expiry so re-checks don't
-/// re-notify). Cleans up expired keys so the set stays small.
+/// A fired subscription, surfaced via the tray red-dot + click popup (NOT a
+/// Windows toast — toasts are reserved for the mission timer). Serialized to the
+/// popup webview ("notify" window).
+#[derive(Clone, serde::Serialize)]
+pub struct SubNotify {
+    pub kind: String,    // "fissure" | "cycle" | "arbitration"
+    pub icon: String,    // emoji shown in the popup
+    pub title: String,
+    pub detail: String,
+    pub ts: i64,         // fired-at (ms) for relative time in the popup
+}
+
+/// Check fissure subscriptions after each worldstate refresh. Emits a
+/// notification for each new matching fissure (keyed by node+expiry so re-checks
+/// don't re-notify). Cleans up expired keys so the set stays small.
 fn check_fissure_alerts(
     fissures: &[models::Fissure],
     alerts: &[FissureAlert],
     notified: &mut std::collections::HashSet<String>,
-    tx: &mpsc::Sender<AlertMsg>,
+    tx: &mpsc::Sender<SubNotify>,
 ) {
     if alerts.is_empty() { return; }
     for f in fissures {
@@ -50,9 +62,12 @@ fn check_fissure_alerts(
             let key = format!("{}:{}", f.node_key, f.expiry_ms);
             if notified.insert(key) {
                 let kind = if f.is_hard { " [钢铁]" } else if f.is_storm { " [风暴]" } else { "" };
-                let _ = tx.send(AlertMsg {
-                    title: format!("裂缝出现 · {}{}{}", f.tier_label, f.mission_type, kind),
-                    body: format!("{} · {} · 剩余 {}", f.node_name, f.planet, f.remain_str),
+                let _ = tx.send(SubNotify {
+                    kind: "fissure".into(),
+                    icon: "🌀".into(),
+                    title: format!("{}{}{}", f.tier_label, f.mission_type, kind),
+                    detail: format!("{} · {} · 剩余 {}", f.node_name, f.planet, f.remain_str),
+                    ts: now_ms(),
                 });
             }
         }
@@ -71,7 +86,7 @@ fn check_arbitration_alerts(
     arb: Option<&models::ArbitrationInfo>,
     alerts: &[ArbitrationAlert],
     prev_key: &mut String,
-    tx: &mpsc::Sender<AlertMsg>,
+    tx: &mpsc::Sender<SubNotify>,
 ) {
     if alerts.is_empty() { return; }
     let Some(arb) = arb else { return };
@@ -82,12 +97,15 @@ fn check_arbitration_alerts(
         let m_ok = alert.mission_type.is_empty() || alert.mission_type == arb.current.mission;
         let n_ok = alert.planet.is_empty() || alert.planet == arb.current.planet;
         if m_ok && n_ok {
-            let _ = tx.send(AlertMsg {
+            let _ = tx.send(SubNotify {
+                kind: "arbitration".into(),
+                icon: "⚔".into(),
                 title: format!("仲裁 · {}", arb.current.mission),
-                body: format!("{} · {} · Lv {}-{} · 剩余 {}",
+                detail: format!("{} · {} · Lv {}-{} · 剩余 {}",
                     arb.current.node, arb.current.planet,
                     arb.current.min_level, arb.current.max_level,
                     arb.remain_str),
+                ts: now_ms(),
             });
         }
     }
@@ -99,7 +117,7 @@ fn check_cycle_alerts(
     cycles: &[models::CycleInfo],
     alerts: &[CycleAlert],
     prev_states: &mut std::collections::HashMap<String, String>,
-    tx: &mpsc::Sender<AlertMsg>,
+    tx: &mpsc::Sender<SubNotify>,
 ) {
     if alerts.is_empty() { return; }
     for cycle in cycles {
@@ -109,13 +127,127 @@ fn check_cycle_alerts(
         prev_states.insert(cycle.name.clone(), cycle.state.clone());
         for alert in alerts {
             if alert.location == cycle.name && alert.state == cycle.state {
-                let _ = tx.send(AlertMsg {
+                let _ = tx.send(SubNotify {
+                    kind: "cycle".into(),
+                    icon: "🌓".into(),
                     title: format!("{} · {}", cycle.name, cycle.state),
-                    body: format!("剩余 {}", cycle.remain_str),
+                    detail: format!("剩余 {}", cycle.remain_str),
+                    ts: now_ms(),
                 });
             }
         }
     }
+}
+
+/// Type aliases for the managed notification state.
+type NotifyList = Arc<StdRwLock<Vec<SubNotify>>>;
+type FlashFlag = Arc<std::sync::atomic::AtomicBool>;
+
+/// Mark the logo's *interior* transparent pixels (the hollow center). Transparent
+/// pixels reachable from the image border via flood-fill are exterior background;
+/// the remaining transparent pixels are the enclosed hole.
+fn hole_mask(base: &tauri::image::Image) -> Vec<bool> {
+    let w = base.width() as usize;
+    let h = base.height() as usize;
+    let rgba = base.rgba();
+    let n = w * h;
+    let is_t = |i: usize| rgba[i * 4 + 3] <= 32;
+    let mut exterior = vec![false; n];
+    let mut stack: Vec<usize> = Vec::new();
+    // Seed from all border transparent pixels.
+    for x in 0..w {
+        for &i in &[x, (h - 1) * w + x] {
+            if is_t(i) && !exterior[i] { exterior[i] = true; stack.push(i); }
+        }
+    }
+    for y in 0..h {
+        for &i in &[y * w, y * w + (w - 1)] {
+            if is_t(i) && !exterior[i] { exterior[i] = true; stack.push(i); }
+        }
+    }
+    while let Some(i) = stack.pop() {
+        let x = i % w;
+        let y = i / w;
+        if x > 0 { let j = i - 1; if is_t(j) && !exterior[j] { exterior[j] = true; stack.push(j); } }
+        if x + 1 < w { let j = i + 1; if is_t(j) && !exterior[j] { exterior[j] = true; stack.push(j); } }
+        if y > 0 { let j = i - w; if is_t(j) && !exterior[j] { exterior[j] = true; stack.push(j); } }
+        if y + 1 < h { let j = i + w; if is_t(j) && !exterior[j] { exterior[j] = true; stack.push(j); } }
+    }
+    (0..n).map(|i| is_t(i) && !exterior[i]).collect()
+}
+
+/// Precompute tray frames that pulse the logo's hollow center with a bright,
+/// high-contrast light that blooms ~2px outward (center brightest, fading out)
+/// so it's eye-catching despite the tiny tray size — while the logo body stays
+/// clean. Cycling these is the "unread subscription" indicator.
+fn make_center_pulse_frames(base: &tauri::image::Image) -> Vec<tauri::image::Image<'static>> {
+    let w = base.width() as usize;
+    let h = base.height() as usize;
+    let src = base.rgba();
+    let hole = hole_mask(base);
+    let has_hole = hole.iter().any(|&b| b);
+    let (cr, cg, cb) = (255.0f32, 45.0, 45.0); // vivid alert red
+
+    // Glow weight per pixel: 1.0 in the hole, fading out 2px (a soft bloom).
+    let mut weight = vec![0.0f32; w * h];
+    if has_hole {
+        use std::collections::VecDeque;
+        let mut dist = vec![u8::MAX; w * h];
+        let mut q: VecDeque<usize> = VecDeque::new();
+        for i in 0..w * h {
+            if hole[i] { dist[i] = 0; q.push_back(i); }
+        }
+        while let Some(i) = q.pop_front() {
+            let d = dist[i];
+            if d >= 2 { continue; }
+            let (x, y) = (i % w, i / w);
+            let mut nb = [usize::MAX; 4];
+            if x > 0 { nb[0] = i - 1; }
+            if x + 1 < w { nb[1] = i + 1; }
+            if y > 0 { nb[2] = i - w; }
+            if y + 1 < h { nb[3] = i + w; }
+            for &j in nb.iter() {
+                if j != usize::MAX && dist[j] == u8::MAX {
+                    dist[j] = d + 1;
+                    q.push_back(j);
+                }
+            }
+        }
+        for i in 0..w * h {
+            weight[i] = match dist[i] { 0 => 1.0, 1 => 0.65, 2 => 0.35, _ => 0.0 };
+        }
+    }
+
+    // Two frames only → simple bright/dark alternation (no gradient).
+    let levels = [1.0f32, 0.0];
+    levels
+        .iter()
+        .map(|&t| {
+            let mut rgba = src.to_vec();
+            if has_hole {
+                for (i, &ww) in weight.iter().enumerate() {
+                    if ww <= 0.0 { continue; }
+                    let p = i * 4;
+                    let k = (t * ww).min(1.0);
+                    rgba[p] = (rgba[p] as f32 * (1.0 - k) + cr * k) as u8;
+                    rgba[p + 1] = (rgba[p + 1] as f32 * (1.0 - k) + cg * k) as u8;
+                    rgba[p + 2] = (rgba[p + 2] as f32 * (1.0 - k) + cb * k) as u8;
+                    // Light up the transparent hole; logo pixels stay opaque.
+                    rgba[p + 3] = (rgba[p + 3] as f32).max(255.0 * k) as u8;
+                }
+            } else {
+                // Fallback (no detectable hole): tint the whole logo.
+                for px in rgba.chunks_exact_mut(4) {
+                    if px[3] > 32 {
+                        px[0] = (px[0] as f32 * (1.0 - t) + cr * t) as u8;
+                        px[1] = (px[1] as f32 * (1.0 - t) + cg * t) as u8;
+                        px[2] = (px[2] as f32 * (1.0 - t) + cb * t) as u8;
+                    }
+                }
+            }
+            tauri::image::Image::new_owned(rgba, w as u32, h as u32)
+        })
+        .collect()
 }
 
 fn build_payload(state: &AppState, timer_state: &MissionTimerState) -> AppStatePayload {
@@ -301,22 +433,13 @@ fn single_capture(cmd_tx: tauri::State<'_, mpsc::Sender<TimerCommand>>) -> Resul
     cmd_tx.send(TimerCommand::SingleCapture).map_err(|e| e.to_string())
 }
 
-/// Resolve the game window the same way the OCR thread does: first visible
-/// window whose title matches the configured keyword.
-fn resolve_hwnd(cfg: &AppConfig) -> isize {
-    window::list_windows(&cfg.mission_timer.window_title)
-        .first()
-        .map(|w| w.hwnd as isize)
-        .unwrap_or(0)
-}
-
 /// Capture the current game frame for the ROI calibration overlay. Returns a
 /// `data:image/png;base64,...` URL. The frame is processed identically to the
 /// OCR pipeline (same `strip_frame`), so drawn ROI fractions map 1:1.
 #[tauri::command]
 fn capture_preview(config: tauri::State<'_, SharedConfig>) -> Result<String, String> {
     let cfg = config.read().unwrap();
-    let hwnd = resolve_hwnd(&cfg);
+    let hwnd = window::resolve_hwnd(&cfg.mission_timer.window_title);
     if hwnd == 0 || !window::is_valid(hwnd) {
         return Err("未检测到游戏窗口".into());
     }
@@ -339,7 +462,7 @@ fn test_recognize(
     h: f64,
 ) -> Result<String, String> {
     let cfg = config.read().unwrap();
-    let hwnd = resolve_hwnd(&cfg);
+    let hwnd = window::resolve_hwnd(&cfg.mission_timer.window_title);
     if hwnd == 0 || !window::is_valid(hwnd) {
         return Err("未检测到游戏窗口".into());
     }
@@ -482,7 +605,7 @@ fn test_alert(app: tauri::AppHandle, config: tauri::State<'_, SharedConfig>) -> 
         };
         (
             cfg.mission_timer.alert_method.clone(),
-            resolve_hwnd(&cfg),
+            window::resolve_hwnd(&cfg.mission_timer.window_title),
             tpl.replace("{min}", "5"),
         )
     };
@@ -511,6 +634,44 @@ async fn update_item_names(app: tauri::AppHandle) -> Result<usize, String> {
 #[tauri::command]
 fn item_names_count() -> usize {
     item_i18n::count()
+}
+
+/// The Warframe game update the bundled item-name table (`baro_zh.json`) was
+/// generated from. Updated by hand at release time (alongside refreshing the
+/// table), since the bundled table is a frozen snapshot per release.
+const GAME_DATA_VERSION: &str = "更新 43《Jade 之影：众星》";
+
+/// Surface the game version the bundled item library corresponds to (设置 → 物品库).
+#[tauri::command]
+fn game_data_version() -> &'static str {
+    GAME_DATA_VERSION
+}
+
+/// Current accumulated subscription notifications (newest first) for the popup.
+#[tauri::command]
+fn get_notifications(list: tauri::State<'_, NotifyList>) -> Vec<SubNotify> {
+    list.read().unwrap().clone()
+}
+
+/// Clear all subscription notifications and stop the tray flashing.
+#[tauri::command]
+fn clear_notifications(list: tauri::State<'_, NotifyList>, flashing: tauri::State<'_, FlashFlag>) {
+    list.write().unwrap().clear();
+    flashing.store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Inject a sample subscription notification so the user can preview the tray
+/// flash + hover popup without waiting for a real fissure to appear.
+#[tauri::command]
+fn test_notification(tx: tauri::State<'_, mpsc::Sender<SubNotify>>) -> Result<(), String> {
+    tx.send(SubNotify {
+        kind: "fissure".into(),
+        icon: "🌀".into(),
+        title: "测试 · 中纪 生存".into(),
+        detail: "地球 · 这是一条测试提醒 · 剩余 50m".into(),
+        ts: now_ms(),
+    })
+    .map_err(|e| e.to_string())
 }
 
 // ── In-app updater ───────────────────────────────────────────────────────────
@@ -597,12 +758,27 @@ pub fn run() {
             let timer_config = config.clone();
             let timer_shared = timer_state.clone();
             let (log_tx, log_rx) = mpsc::channel::<String>();
-            // Alert channel: the OCR thread has no AppHandle, so toast requests
-            // are forwarded here for delivery. Cloned so the worldstate loop can
-            // also send subscription alerts through the same channel.
+            // Alert channel: the OCR thread has no AppHandle, so mission-timer
+            // toast requests are forwarded here for delivery.
             let (alert_tx, alert_rx) = mpsc::channel::<AlertMsg>();
-            let ws_alert_tx = alert_tx.clone();
             let cmd_tx = start_timer_thread(timer_shared, timer_config, templates_arc, log_tx, alert_tx);
+
+            // Subscription notifications: fissure/cycle/arbitration matches go to
+            // the tray (red-dot + flashing + click popup), NOT a toast.
+            let notify_list: NotifyList = Arc::new(StdRwLock::new(Vec::new()));
+            let flashing: FlashFlag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let (notify_tx, notify_rx) = mpsc::channel::<SubNotify>();
+
+            // Tray icons: normal + a red-dot variant, alternated to "flash".
+            // Build an *owned* (`'static`) copy — the borrowed `default_window_icon`
+            // is tied to `app` and can't move into the flash thread.
+            let base_ref = app.default_window_icon().unwrap();
+            let base_icon = tauri::image::Image::new_owned(
+                base_ref.rgba().to_vec(),
+                base_ref.width(),
+                base_ref.height(),
+            );
+            let glow_frames = make_center_pulse_frames(&base_icon);
 
             // Log forwarding thread
             let log_handle = app.handle().clone();
@@ -612,11 +788,66 @@ pub fn run() {
                 }
             });
 
-            // Alert (toast) forwarding thread
+            // Alert (toast) forwarding thread — mission timer only.
             let alert_handle = app.handle().clone();
             std::thread::spawn(move || {
                 while let Ok(msg) = alert_rx.recv() {
                     show_toast(&alert_handle, &msg.title, &msg.body);
+                }
+            });
+
+            // Subscription-notify forwarding thread: accumulate the list, push it
+            // to the popup webview, update the tray tooltip, and start flashing.
+            let notify_handle = app.handle().clone();
+            let notify_store = notify_list.clone();
+            let notify_flag = flashing.clone();
+            std::thread::spawn(move || {
+                while let Ok(msg) = notify_rx.recv() {
+                    let snapshot = {
+                        let mut list = notify_store.write().unwrap();
+                        list.insert(0, msg);
+                        if list.len() > 50 { list.truncate(50); }
+                        list.clone()
+                    };
+                    let _ = notify_handle.emit("sub-notify", snapshot);
+                    notify_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            });
+
+            // Tray flash thread: while `flashing`, alternate the tray icon every
+            // 600ms; reset to the normal icon once when flashing stops. Tray ops
+            // must run on the main thread.
+            let flash_handle = app.handle().clone();
+            let flash_flag = flashing.clone();
+            let flash_normal = base_icon.clone();
+            let flash_frames = glow_frames;
+            std::thread::spawn(move || {
+                let mut idx = 0usize;
+                let mut was_active = false;
+                loop {
+                    std::thread::sleep(Duration::from_millis(500));
+                    let active = flash_flag.load(std::sync::atomic::Ordering::Relaxed);
+                    if active {
+                        was_active = true;
+                        let icon = flash_frames[idx % flash_frames.len()].clone();
+                        idx = idx.wrapping_add(1);
+                        let h = flash_handle.clone();
+                        let _ = flash_handle.run_on_main_thread(move || {
+                            if let Some(tray) = h.tray_by_id("main") {
+                                let _ = tray.set_icon(Some(icon));
+                            }
+                        });
+                    } else if was_active {
+                        was_active = false;
+                        idx = 0;
+                        let icon = flash_normal.clone();
+                        let h = flash_handle.clone();
+                        let _ = flash_handle.run_on_main_thread(move || {
+                            if let Some(tray) = h.tray_by_id("main") {
+                                let _ = tray.set_icon(Some(icon));
+                            }
+                        });
+                    }
                 }
             });
 
@@ -625,6 +856,7 @@ pub fn run() {
             let fetch_timer = timer_state.clone();
             let fetch_handle = app.handle().clone();
             let fetch_config = config.clone();
+            let fetch_notify_tx = notify_tx.clone();
             tauri::async_runtime::spawn(async move {
                 let mut notified_fissures: std::collections::HashSet<String> = std::collections::HashSet::new();
                 let mut prev_cycle_states: std::collections::HashMap<String, String> = std::collections::HashMap::new();
@@ -646,10 +878,10 @@ pub fn run() {
                                 .collect();
                             (all, s.cycles.clone(), cfg.fissure_alerts.clone(), cfg.cycle_alerts.clone(), cfg.arbitration_alerts.clone())
                         };
-                        check_fissure_alerts(&all_fissures, &fissure_alerts, &mut notified_fissures, &ws_alert_tx);
-                        check_cycle_alerts(&cycles, &cycle_alerts, &mut prev_cycle_states, &ws_alert_tx);
+                        check_fissure_alerts(&all_fissures, &fissure_alerts, &mut notified_fissures, &fetch_notify_tx);
+                        check_cycle_alerts(&cycles, &cycle_alerts, &mut prev_cycle_states, &fetch_notify_tx);
                         let arb = parse_arbitration(now);
-                        check_arbitration_alerts(arb.as_ref(), &arb_alerts, &mut prev_arb_key, &ws_alert_tx);
+                        check_arbitration_alerts(arb.as_ref(), &arb_alerts, &mut prev_arb_key, &fetch_notify_tx);
                     }
                 }
             });
@@ -688,11 +920,17 @@ pub fn run() {
 
             let tray_state = state.clone();
             let tray_timer = timer_state.clone();
-            let _tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
+            let menu_flash = flashing.clone();
+            let tray_flash = flashing.clone();
+            let tray_notify = notify_list.clone();
+            let _tray = TrayIconBuilder::with_id("main")
+                .icon(base_icon.clone())
+                .tooltip("VoxAlic")
                 .menu(&menu)
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "show" => {
+                        // Opening the main window counts as acknowledging.
+                        menu_flash.store(false, std::sync::atomic::Ordering::Relaxed);
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
                             let _ = window.set_focus();
@@ -709,19 +947,61 @@ pub fn run() {
                     "quit" => app.exit(0),
                     _ => {}
                 })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up, ..
-                    } = event {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                .on_tray_icon_event(move |tray, event| {
+                    let app = tray.app_handle();
+                    match event {
+                        // Hover in → show the notification popup above the cursor.
+                        // No focus steal, so merely brushing the tray doesn't grab
+                        // focus from the game.
+                        TrayIconEvent::Enter { position, .. } => {
+                            if let Some(popup) = app.get_webview_window("notify") {
+                                // Push the current list in case the popup webview
+                                // missed earlier `sub-notify` events (startup race).
+                                let snapshot = tray_notify.read().unwrap().clone();
+                                let _ = app.emit_to("notify", "sub-notify", snapshot);
+                                if let Ok(size) = popup.outer_size() {
+                                    let x = (position.x as i32 - size.width as i32).max(0);
+                                    let y = (position.y as i32 - size.height as i32 - 12).max(0);
+                                    let _ = popup.set_position(tauri::PhysicalPosition::new(x, y));
+                                }
+                                let _ = popup.show();
+                            }
                         }
+                        // Hover out → hide the popup.
+                        TrayIconEvent::Leave { .. } => {
+                            if let Some(popup) = app.get_webview_window("notify") {
+                                let _ = popup.hide();
+                            }
+                        }
+                        // Left click → open the main window + acknowledge (stop flash).
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } => {
+                            tray_flash.store(false, std::sync::atomic::Ordering::Relaxed);
+                            if let Some(popup) = app.get_webview_window("notify") {
+                                let _ = popup.hide();
+                            }
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        _ => {}
                     }
                 })
                 .build(app)?;
+
+            // Hide the notification popup when it loses focus (click elsewhere).
+            if let Some(popup) = app.get_webview_window("notify") {
+                let popup_clone = popup.clone();
+                popup.on_window_event(move |event| {
+                    if let tauri::WindowEvent::Focused(false) = event {
+                        let _ = popup_clone.hide();
+                    }
+                });
+            }
 
             // Window close -> hide to tray or exit based on config
             let close_config = config.clone();
@@ -743,9 +1023,12 @@ pub fn run() {
             app.manage(timer_state);
             app.manage(cmd_tx);
             app.manage(templates_for_cmd);
+            app.manage(notify_list);
+            app.manage(flashing);
+            app.manage(notify_tx);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, timer_command, list_windows, select_window, single_capture, capture_preview, test_recognize, test_alert, update_item_names, item_names_count, get_autostart, set_autostart, uninstall_clean, check_for_update, install_update])
+        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, timer_command, list_windows, select_window, single_capture, capture_preview, test_recognize, test_alert, update_item_names, item_names_count, game_data_version, get_notifications, clear_notifications, test_notification, get_autostart, set_autostart, uninstall_clean, check_for_update, install_update])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -84,6 +84,8 @@ struct LangName {
 pub async fn update_from_remote(app_data_dir: PathBuf) -> Result<usize, String> {
     let client = reqwest::Client::builder()
         .user_agent("Warframe/1.0")
+        // Generous: the i18n payload is ~51 MB.
+        .timeout(std::time::Duration::from_secs(180))
         .build()
         .map_err(|e| e.to_string())?;
     let resp = client

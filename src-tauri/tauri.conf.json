@@ -18,6 +18,21 @@
         "height": 680,
         "minWidth": 700,
         "minHeight": 500
+      },
+      {
+        "label": "notify",
+        "title": "订阅提醒",
+        "url": "notify.html",
+        "width": 320,
+        "height": 380,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "focus": true
       }
     ],
     "security": {

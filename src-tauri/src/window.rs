@@ -69,6 +69,13 @@ unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
     BOOL::from(true)
 }
 
+/// First visible window whose title contains `keyword`, or 0 if none. Shared by
+/// the OCR thread and the calibration/test commands so they resolve the game
+/// window identically.
+pub fn resolve_hwnd(keyword: &str) -> isize {
+    list_windows(keyword).first().map(|w| w.hwnd as isize).unwrap_or(0)
+}
+
 /// Check whether the given window is minimised (iconic).
 pub fn is_minimized(hwnd: isize) -> bool {
     unsafe { IsIconic(HWND(hwnd as *mut _)).as_bool() }
