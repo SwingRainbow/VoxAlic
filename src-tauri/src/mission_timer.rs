@@ -64,7 +64,17 @@ fn dispatch_alert(
             body,
         });
     } else {
-        crate::window::bring_to_front(hwnd);
+        // Focus mode: try to bring the game window to front; if the
+        // window is gone (game closed / crashed), fall back to a
+        // toast so the user doesn't miss the alert.
+        if hwnd != 0 && crate::window::is_valid(hwnd) {
+            crate::window::bring_to_front(hwnd);
+        } else {
+            let _ = alert_tx.send(AlertMsg {
+                title: ALERT_TITLE.into(),
+                body,
+            });
+        }
     }
 }
 

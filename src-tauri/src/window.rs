@@ -5,6 +5,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SWP_NOSIZE, SWP_SHOWWINDOW, SW_RESTORE,
 };
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+    TH32CS_SNAPPROCESS,
+};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WindowInfo {
@@ -72,8 +76,83 @@ unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
 /// First visible window whose title contains `keyword`, or 0 if none. Shared by
 /// the OCR thread and the calibration/test commands so they resolve the game
 /// window identically.
+///
+/// The search is two-tiered:
+/// 1. Title match AND process-name match — prevents browser tabs with
+///    "Warframe" in the title from being mistaken for the game.
+/// 2. If (1) yields nothing, fall back to process-name-only search (the game
+///    window may have a non-standard title).
 pub fn resolve_hwnd(keyword: &str) -> isize {
-    list_windows(keyword).first().map(|w| w.hwnd as isize).unwrap_or(0)
+    let keyword_lower = keyword.to_lowercase();
+    // Tier 1: title match + process-name verification.
+    for w in list_windows(keyword) {
+        if exe_name_for_pid(w.pid)
+            .map(|n| n.to_lowercase().contains(&keyword_lower))
+            .unwrap_or(false)
+        {
+            return w.hwnd as isize;
+        }
+    }
+    // Tier 2: process-name-only fallback.
+    find_window_by_process(keyword)
+}
+
+/// Look up the executable name for a process id. Returns `None` if the process
+/// is no longer alive or the snapshot fails.
+fn exe_name_for_pid(pid: u32) -> Option<String> {
+    unsafe {
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()?;
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        if Process32FirstW(snap, &mut entry).is_ok() {
+            loop {
+                if entry.th32ProcessID == pid {
+                    let name = String::from_utf16_lossy(&entry.szExeFile);
+                    let nul = name.find('\0').unwrap_or(name.len());
+                    return Some(name[..nul].to_string());
+                }
+                if Process32NextW(snap, &mut entry).is_err() {
+                    break;
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Enumerate visible top-level windows and return the first one whose owning
+/// process's executable name contains `keyword` (case-insensitive). Returns 0
+/// if no match.
+fn find_window_by_process(keyword: &str) -> isize {
+    // (found_hwnd, own_pid, keyword_lower)
+    let mut ctx: (isize, u32, String) = (0, std::process::id(), keyword.to_lowercase());
+    unsafe {
+        let _ = EnumWindows(
+            Some(enum_callback_by_process),
+            LPARAM(&mut ctx as *mut (isize, u32, String) as isize),
+        );
+    }
+    ctx.0
+}
+
+unsafe extern "system" fn enum_callback_by_process(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let ctx: &mut (isize, u32, String) = &mut *(lparam.0 as *mut (isize, u32, String));
+    // Already found a match — stop enumerating.
+    if ctx.0 != 0 { return BOOL::from(true); }
+    if !IsWindowVisible(hwnd).as_bool() { return BOOL::from(true); }
+    let len = GetWindowTextLengthW(hwnd);
+    if len == 0 { return BOOL::from(true); }
+    let mut pid: u32 = 0;
+    GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    if pid == 0 || pid == ctx.1 { return BOOL::from(true); }
+    if let Some(name) = exe_name_for_pid(pid) {
+        if name.to_lowercase().contains(&ctx.2) {
+            ctx.0 = hwnd.0 as isize;
+        }
+    }
+    BOOL::from(true)
 }
 
 /// Check whether the given window is minimised (iconic).

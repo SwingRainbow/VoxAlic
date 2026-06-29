@@ -20,6 +20,7 @@
     <div id="circuit-panel" class="bounty-panel hidden"></div>
     <div id="arbitration-card"></div>
     <div id="baro-card"></div>
+    <div id="cycles-updated" class="cycles-updated"></div>
   </div>
 
   <div id="tab-fissures" class="tab-content">
@@ -102,8 +103,11 @@
       </div>
 
       <div class="settings-item">
-        <div class="settings-label">卸载</div>
-        <button class="timer-btn-sm btn-danger" id="btn-uninstall">卸载软件…</button>
+        <div class="settings-label">其他</div>
+        <div class="alert-method-row">
+          <button class="timer-btn-sm" id="btn-refresh">刷新数据</button>
+          <button class="timer-btn-sm btn-danger" id="btn-uninstall">卸载软件…</button>
+        </div>
       </div>
     </div>
 
@@ -134,7 +138,6 @@
         <div id="arb-alerts-list" class="alert-rules-list"></div>
       </div>
       <div class="sub-unified-foot">
-        <button class="timer-btn-sm" id="btn-test-notify">测试提醒效果</button>
         <span class="sub-unified-hint">命中时托盘图标闪烁，鼠标悬停托盘查看详情 · 裂缝/仲裁在世界状态刷新时检查（每30分钟）· 周期在状态切换时触发</span>
       </div>
     </div>
@@ -284,11 +287,6 @@
       </div>
       <div class="log-content" id="log-content"></div>
     </div>
-  </div>
-
-  <div class="status-bar">
-    <button id="btn-refresh">立即刷新</button>
-    <span id="status-text">等待首次加载...</span>
   </div>
 
   <script type="module" src="/src/main.ts" defer></script>

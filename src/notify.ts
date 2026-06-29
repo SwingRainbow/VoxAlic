@@ -8,6 +8,8 @@ interface SubNotify {
   title: string;
   detail: string;
   ts: number;      // fired-at (ms)
+  node: string;    // locate key for click-through
+  sub: string;     // fissure sub-tab hint
 }
 
 const listEl = () => document.getElementById('np-list')!;
@@ -34,8 +36,8 @@ function render(list: SubNotify[]) {
     return;
   }
   el.innerHTML = list.map(n => `
-    <div class="np-item np-${esc(n.kind)}">
-      <div class="np-icon">${esc(n.icon)}</div>
+    <div class="np-item np-${esc(n.kind)}" data-kind="${esc(n.kind)}" data-node="${esc(n.node)}" data-sub="${esc(n.sub)}">
+      ${n.icon ? `<div class="np-icon">${esc(n.icon)}</div>` : ''}
       <div class="np-body">
         <div class="np-title">${esc(n.title)}</div>
         <div class="np-detail">${esc(n.detail)}</div>
@@ -45,12 +47,37 @@ function render(list: SubNotify[]) {
 }
 
 async function init() {
-  render(await invoke<SubNotify[]>('get_notifications'));
+  // Register the push listener FIRST. The notify window's webview can execute
+  // this script before `app.manage(notify_list)` runs at the end of the Rust
+  // `setup` closure; if the initial `get_notifications` invoke loses that race
+  // it rejects, and doing it before `listen` would abort init() and leave the
+  // window permanently without a `sub-notify` listener (empty popup forever,
+  // even though the tray flashes and re-emits on hover). Listener-first makes
+  // the tray-hover re-emit a reliable safety net regardless of startup timing.
   await listen<SubNotify[]>('sub-notify', e => render(e.payload));
   document.getElementById('np-clear')!.addEventListener('click', async () => {
     await invoke('clear_notifications');
     render([]);
   });
+  // Auto-hide is owned by the Rust cursor-poll watcher (start_popup_watch); the
+  // popup no longer needs to report hover via DOM events.
+  // Click an item → raise the main window and navigate to that entry.
+  listEl().addEventListener('click', e => {
+    const item = (e.target as HTMLElement).closest('.np-item') as HTMLElement | null;
+    if (!item) return;
+    invoke('open_main_navigate', {
+      kind: item.dataset.kind || '',
+      node: item.dataset.node || '',
+      sub: item.dataset.sub || '',
+    });
+  });
+  try {
+    render(await invoke<SubNotify[]>('get_notifications'));
+  } catch {
+    // State not managed yet (startup race) — show the empty placeholder; the
+    // next push / tray-hover re-emit will populate the list.
+    render([]);
+  }
 }
 
 init();

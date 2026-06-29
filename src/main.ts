@@ -223,7 +223,7 @@ function renderCycles(cycles: CycleInfo[]) {
     return `
     <div class="cycle-card ${c.is_day ? 'day' : 'night'}${clickable ? ' clickable' : ''}${isOpen ? ' open' : ''}"${clickable ? ` data-cycle="${c.name}"` : ''}>
       <div class="card-name">${c.name}${clickable ? ` <span class="bounty-tag">${tag}</span>` : ''}</div>
-      <div class="card-state">${c.state_icon} ${c.state}</div>
+      <div class="card-state">${c.state}</div>
       <div class="card-time">剩余 ${fmtRemain(c.remain_ms)}</div>
     </div>`;
   }).join('');
@@ -530,6 +530,38 @@ function renderTimer(t: MissionTimerPayload) {
   }
 }
 
+// Programmatic tab activation (shared by click handlers and popup click-through).
+function activateTab(tab: string) {
+  const btn = document.querySelector(`.tab-btn[data-tab="${tab}"]`) as HTMLButtonElement | null;
+  if (!btn || btn.classList.contains('locked') || btn.disabled) return;
+  document.querySelectorAll('.tab-btn, .tab-content').forEach(e => e.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById(`tab-${tab}`)!.classList.add('active');
+}
+
+function activateSubTab(sub: string) {
+  const btn = document.querySelector(`.sub-tab-btn[data-sub="${sub}"]`) as HTMLButtonElement | null;
+  if (!btn) return;
+  document.querySelectorAll('.sub-tab-btn').forEach(e => e.classList.remove('active'));
+  btn.classList.add('active');
+  currentSubTab = sub;
+}
+
+// Scroll the fissure row for `node` into view and pulse it briefly. Runs after
+// the next paint so the freshly-rendered rows exist.
+function highlightFissureRow(node: string) {
+  if (!node) return;
+  requestAnimationFrame(() => {
+    const rows = document.querySelectorAll('#fissure-table tbody tr');
+    const row = Array.from(rows).find(
+      r => (r as HTMLElement).dataset.node === node) as HTMLElement | undefined;
+    if (!row) return;
+    row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    row.classList.add('row-flash');
+    setTimeout(() => row.classList.remove('row-flash'), 2400);
+  });
+}
+
 function renderFissures() {
   if (!currentData) return;
   const filtered = getFilteredFissures();
@@ -538,7 +570,7 @@ function renderFissures() {
     const sub = fissureSubscribed(f);
     const cls = `${f.is_expiring ? 'expiring' : ''}${sub ? ' subscribed' : ''}`.trim();
     return `
-    <tr class="${cls}" style="background:${TIER_BG[f.tier_key] || '#252525'};color:${TIER_FG};">
+    <tr class="${cls}" data-node="${f.node_name}" style="background:${TIER_BG[f.tier_key] || '#252525'};color:${TIER_FG};">
       <td>${sub ? '<span class="sub-bell">🔔</span>' : ''}<img src="/relics/${f.tier_key}.png" class="relic-icon" alt=""> ${f.tier_label}</td>
       <td>${f.node_name}</td>
       <td>${f.planet}</td>
@@ -632,8 +664,10 @@ let _lastAlertSig = '';
 
 function handleUpdate(payload: AppStatePayload) {
   currentData = payload;
-  document.getElementById('status-text')!.textContent =
-    `更新于 ${payload.last_update}  下次刷新 ${payload.countdown_secs}s`;
+  // Subtle "last updated" watermark at the bottom of the 世界时间 tab. The
+  // "下次刷新 Ns" countdown is intentionally hidden for now.
+  document.getElementById('cycles-updated')!.textContent =
+    `更新于 ${payload.last_update}`;
   renderCycles(payload.cycles);
   renderBountyPanel(payload.bounties);
   renderCircuitPanel(payload.circuit);
@@ -670,12 +704,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // Tab switching
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      // Locked tabs (e.g. 任务计时) are disabled and cannot be activated.
-      if (btn.classList.contains('locked') || (btn as HTMLButtonElement).disabled) return;
-      const tab = (btn as HTMLElement).dataset.tab;
-      document.querySelectorAll('.tab-btn, .tab-content').forEach(e => e.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById(`tab-${tab}`)!.classList.add('active');
+      activateTab((btn as HTMLElement).dataset.tab!);
     });
   });
 
@@ -699,9 +728,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // Sub-tab switching
   document.querySelectorAll('.sub-tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.sub-tab-btn').forEach(e => e.classList.remove('active'));
-      btn.classList.add('active');
-      currentSubTab = (btn as HTMLElement).dataset.sub!;
+      activateSubTab((btn as HTMLElement).dataset.sub!);
       renderFissures();
     });
   });
@@ -738,6 +765,8 @@ window.addEventListener('DOMContentLoaded', () => {
     });
     // Init subscription rules
     refreshAlerts();
+  }).catch((err: unknown) => {
+    console.error('get_config 失败:', err);
   });
 
   const refreshAlerts = setupAlerts();
@@ -909,12 +938,6 @@ window.addEventListener('DOMContentLoaded', () => {
       .catch(err => { alertTestStatus.textContent = String(err); });
   });
 
-  // Test the subscription notification (tray flash + hover popup) without
-  // waiting for a real fissure.
-  document.getElementById('btn-test-notify')?.addEventListener('click', () => {
-    invoke('test_notification');
-  });
-
   // Baro card: click to expand/collapse items table (only when active)
   document.getElementById('baro-card')!.addEventListener('click', () => {
     if (currentData?.baro?.active) {
@@ -966,6 +989,23 @@ window.addEventListener('DOMContentLoaded', () => {
 
   listen<AppStatePayload>('tick-update', (event) => {
     handleUpdate(event.payload);
+  });
+
+  // Click-through from a tray-popup notification → jump to the matching entry.
+  listen<{ kind: string; node: string; sub: string }>('navigate', (event) => {
+    const { kind, node, sub } = event.payload;
+    if (kind === 'fissure') {
+      activateTab('fissures');
+      if (sub) activateSubTab(sub);
+      // Clear filters so the target row can't be hidden by an active filter.
+      (document.getElementById('tier-filter') as HTMLSelectElement).value = '';
+      (document.getElementById('type-filter') as HTMLSelectElement).value = '';
+      renderFissures();
+      highlightFissureRow(node);
+    } else {
+      // cycle / arbitration live on the 世界时间 tab.
+      activateTab('cycles');
+    }
   });
 
   // ── ROI calibration ──

@@ -39,6 +39,17 @@ pub struct SubNotify {
     pub title: String,
     pub detail: String,
     pub ts: i64,         // fired-at (ms) for relative time in the popup
+    pub node: String,    // locate key for click-through (fissure/arb node, cycle location)
+    pub sub: String,     // fissure sub-tab hint: "normal"|"hard"|"storm" (else "")
+}
+
+/// Sent to the main window when a popup item is clicked, to navigate the UI to
+/// the matching entry (e.g. the fissure tab + sub-tab + highlighted row).
+#[derive(Clone, serde::Serialize)]
+struct NavigateMsg {
+    kind: String,
+    node: String,
+    sub: String,
 }
 
 /// Check fissure subscriptions after each worldstate refresh. Emits a
@@ -61,13 +72,17 @@ fn check_fissure_alerts(
             if !tier_ok || !type_ok || !diff_ok { continue; }
             let key = format!("{}:{}", f.node_key, f.expiry_ms);
             if notified.insert(key) {
-                let kind = if f.is_hard { " [钢铁]" } else if f.is_storm { " [风暴]" } else { "" };
+                // Title format: 难度 纪元 任务模式 (no leading icon). 难度 leads.
+                let difficulty = if f.is_hard { "钢铁" } else if f.is_storm { "风暴" } else { "普通" };
+                let sub = if f.is_hard { "hard" } else if f.is_storm { "storm" } else { "normal" };
                 let _ = tx.send(SubNotify {
                     kind: "fissure".into(),
-                    icon: "🌀".into(),
-                    title: format!("{}{}{}", f.tier_label, f.mission_type, kind),
+                    icon: "".into(),
+                    title: format!("{} {} {}", difficulty, f.tier_label, f.mission_type),
                     detail: format!("{} · {} · 剩余 {}", f.node_name, f.planet, f.remain_str),
                     ts: now_ms(),
+                    node: f.node_name.clone(),
+                    sub: sub.into(),
                 });
             }
         }
@@ -106,6 +121,8 @@ fn check_arbitration_alerts(
                     arb.current.min_level, arb.current.max_level,
                     arb.remain_str),
                 ts: now_ms(),
+                node: arb.current.node.clone(),
+                sub: "".into(),
             });
         }
     }
@@ -133,6 +150,8 @@ fn check_cycle_alerts(
                     title: format!("{} · {}", cycle.name, cycle.state),
                     detail: format!("剩余 {}", cycle.remain_str),
                     ts: now_ms(),
+                    node: cycle.name.clone(),
+                    sub: "".into(),
                 });
             }
         }
@@ -142,6 +161,70 @@ fn check_cycle_alerts(
 /// Type aliases for the managed notification state.
 type NotifyList = Arc<StdRwLock<Vec<SubNotify>>>;
 type FlashFlag = Arc<std::sync::atomic::AtomicBool>;
+/// Generation counter that owns the lifetime of the popup-watch thread. Bumped by
+/// a new tray `Enter` and by every explicit hide (left-click, item click-through,
+/// empty-list), so any stale watcher exits on its next poll.
+type HideGen = Arc<std::sync::atomic::AtomicU64>;
+
+/// Authoritative auto-hide for the notify popup: a thread that polls the *real*
+/// cursor position (Win32 `GetCursorPos`, thread-safe) every 120ms and hides the
+/// popup only after the cursor has stayed continuously outside both the popup
+/// rect and a small box around the tray icon for ~360ms.
+///
+/// This replaces an earlier scheme based on the popup's DOM `mouseenter`/`leave`
+/// plus the tray `Leave` event. That scheme was unreliable: the transparent,
+/// non-focused popup frequently dropped those events, so the cancel-the-hide
+/// signal never arrived and the popup vanished while the cursor was travelling to
+/// it. Polling the OS cursor doesn't depend on any webview/event delivery.
+///
+/// `px/py/pw/ph` = popup rect (physical px), captured on the main thread at show
+/// time (the popup doesn't move while open). `tray_x/tray_y` = the Enter cursor
+/// position, used to keep the popup alive across the tiny icon→popup gap.
+#[allow(clippy::too_many_arguments)]
+fn start_popup_watch(
+    app: tauri::AppHandle,
+    gen: HideGen,
+    tray_x: i32,
+    tray_y: i32,
+    px: i32,
+    py: i32,
+    pw: i32,
+    ph: i32,
+) {
+    use std::sync::atomic::Ordering;
+    let g = gen.load(Ordering::SeqCst);
+    std::thread::spawn(move || {
+        let mut misses = 0u32;
+        loop {
+            std::thread::sleep(Duration::from_millis(120));
+            if gen.load(Ordering::SeqCst) != g {
+                return; // superseded by a newer Enter, or an explicit hide
+            }
+            let mut pt = windows::Win32::Foundation::POINT::default();
+            unsafe {
+                let _ = windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt);
+            }
+            let over_popup =
+                pt.x >= px && pt.x <= px + pw && pt.y >= py && pt.y <= py + ph;
+            let near_tray =
+                (pt.x - tray_x).abs() <= 30 && (pt.y - tray_y).abs() <= 30;
+            if over_popup || near_tray {
+                misses = 0;
+            } else {
+                misses += 1;
+                if misses >= 3 {
+                    let app2 = app.clone();
+                    let _ = app.run_on_main_thread(move || {
+                        if let Some(p) = app2.get_webview_window("notify") {
+                            let _ = p.hide();
+                        }
+                    });
+                    return;
+                }
+            }
+        }
+    });
+}
 
 /// Mark the logo's *interior* transparent pixels (the hollow center). Transparent
 /// pixels reachable from the image border via flood-fill are exterior background;
@@ -653,6 +736,31 @@ fn get_notifications(list: tauri::State<'_, NotifyList>) -> Vec<SubNotify> {
     list.read().unwrap().clone()
 }
 
+/// Click-through from a popup item: raise the main window, acknowledge (stop the
+/// tray flash), hide the popup, and tell the main UI to navigate to the matching
+/// entry (fissure tab + sub-tab + highlighted row).
+#[tauri::command]
+fn open_main_navigate(
+    kind: String,
+    node: String,
+    sub: String,
+    app: tauri::AppHandle,
+    flashing: tauri::State<'_, FlashFlag>,
+    hide_gen: tauri::State<'_, HideGen>,
+) {
+    flashing.store(false, std::sync::atomic::Ordering::Relaxed);
+    hide_gen.fetch_add(1, std::sync::atomic::Ordering::SeqCst); // stop the watcher
+    if let Some(popup) = app.get_webview_window("notify") {
+        let _ = popup.hide();
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    let _ = app.emit_to("main", "navigate", NavigateMsg { kind, node, sub });
+}
+
 /// Clear all subscription notifications and stop the tray flashing.
 #[tauri::command]
 fn clear_notifications(list: tauri::State<'_, NotifyList>, flashing: tauri::State<'_, FlashFlag>) {
@@ -662,18 +770,6 @@ fn clear_notifications(list: tauri::State<'_, NotifyList>, flashing: tauri::Stat
 
 /// Inject a sample subscription notification so the user can preview the tray
 /// flash + hover popup without waiting for a real fissure to appear.
-#[tauri::command]
-fn test_notification(tx: tauri::State<'_, mpsc::Sender<SubNotify>>) -> Result<(), String> {
-    tx.send(SubNotify {
-        kind: "fissure".into(),
-        icon: "🌀".into(),
-        title: "测试 · 中纪 生存".into(),
-        detail: "地球 · 这是一条测试提醒 · 剩余 50m".into(),
-        ts: now_ms(),
-    })
-    .map_err(|e| e.to_string())
-}
-
 // ── In-app updater ───────────────────────────────────────────────────────────
 
 #[derive(serde::Serialize)]
@@ -740,10 +836,12 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let state: SharedState = SharedState::default();
+            app.manage(state.clone());
 
             // Load config
             let app_data_dir = app.path().app_data_dir().expect("app data dir");
             let config: SharedConfig = Arc::new(StdRwLock::new(load_config(&app_data_dir)));
+            app.manage(config.clone());
 
             // Load item-name 中文 table (user override file, else embedded default).
             item_i18n::init(&app_data_dir);
@@ -752,9 +850,11 @@ pub fn run() {
             let templates_arc = Arc::new(DigitTemplates::load());
             // Shared with the timer thread AND the test_recognize command.
             let templates_for_cmd = templates_arc.clone();
+            app.manage(templates_for_cmd);
 
             // Mission timer shared state + command channel
             let timer_state: MissionTimerShared = Arc::new(StdRwLock::new(MissionTimerState::new()));
+            app.manage(timer_state.clone());
             let timer_config = config.clone();
             let timer_shared = timer_state.clone();
             let (log_tx, log_rx) = mpsc::channel::<String>();
@@ -762,11 +862,16 @@ pub fn run() {
             // toast requests are forwarded here for delivery.
             let (alert_tx, alert_rx) = mpsc::channel::<AlertMsg>();
             let cmd_tx = start_timer_thread(timer_shared, timer_config, templates_arc, log_tx, alert_tx);
+            app.manage(cmd_tx);
 
             // Subscription notifications: fissure/cycle/arbitration matches go to
             // the tray (red-dot + flashing + click popup), NOT a toast.
             let notify_list: NotifyList = Arc::new(StdRwLock::new(Vec::new()));
+            app.manage(notify_list.clone());
             let flashing: FlashFlag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            app.manage(flashing.clone());
+            let hide_gen: HideGen = Arc::new(std::sync::atomic::AtomicU64::new(0));
+            app.manage(hide_gen.clone());
             let (notify_tx, notify_rx) = mpsc::channel::<SubNotify>();
 
             // Tray icons: normal + a red-dot variant, alternated to "flash".
@@ -923,6 +1028,7 @@ pub fn run() {
             let menu_flash = flashing.clone();
             let tray_flash = flashing.clone();
             let tray_notify = notify_list.clone();
+            let tray_gen = hide_gen.clone();
             let _tray = TrayIconBuilder::with_id("main")
                 .icon(base_icon.clone())
                 .tooltip("VoxAlic")
@@ -950,29 +1056,63 @@ pub fn run() {
                 .on_tray_icon_event(move |tray, event| {
                     let app = tray.app_handle();
                     match event {
-                        // Hover in → show the notification popup above the cursor.
-                        // No focus steal, so merely brushing the tray doesn't grab
-                        // focus from the game.
-                        TrayIconEvent::Enter { position, .. } => {
+                        // Hover in → show the popup anchored to the *tray icon*
+                        // (centered directly above it), not the cursor — so its
+                        // position is fixed regardless of where on the icon the
+                        // cursor entered. Then start the cursor-poll auto-hide.
+                        TrayIconEvent::Enter { rect, .. } => {
+                            // Bump generation: supersede any running watcher.
+                            tray_gen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            let snapshot = tray_notify.read().unwrap().clone();
+                            // Nothing subscribed-and-fired → don't pop an empty box.
+                            if snapshot.is_empty() {
+                                if let Some(popup) = app.get_webview_window("notify") {
+                                    let _ = popup.hide();
+                                }
+                                return;
+                            }
                             if let Some(popup) = app.get_webview_window("notify") {
                                 // Push the current list in case the popup webview
                                 // missed earlier `sub-notify` events (startup race).
-                                let snapshot = tray_notify.read().unwrap().clone();
                                 let _ = app.emit_to("notify", "sub-notify", snapshot);
+                                // Tray icon rect → physical px. Center the popup on
+                                // the icon's horizontal midpoint, sitting above it.
+                                let scale = popup.scale_factor().unwrap_or(1.0);
+                                let ipos = rect.position.to_physical::<i32>(scale);
+                                let isz = rect.size.to_physical::<i32>(scale);
+                                let icon_cx = ipos.x + isz.width / 2;
+                                let icon_top = ipos.y;
+                                let mut prect = (0i32, 0i32, 0i32, 0i32);
                                 if let Ok(size) = popup.outer_size() {
-                                    let x = (position.x as i32 - size.width as i32).max(0);
-                                    let y = (position.y as i32 - size.height as i32 - 12).max(0);
+                                    let (pw, ph) = (size.width as i32, size.height as i32);
+                                    let mut x = icon_cx - pw / 2;
+                                    let mut y = icon_top - ph - 8;
+                                    // Clamp to the current monitor so a right-edge
+                                    // tray icon doesn't push the box off-screen.
+                                    if let Ok(Some(mon)) = popup.current_monitor() {
+                                        let mp = mon.position();
+                                        let ms = mon.size();
+                                        let left = mp.x;
+                                        let right = mp.x + ms.width as i32;
+                                        x = x.clamp(left, (right - pw).max(left));
+                                        y = y.max(mp.y);
+                                    } else {
+                                        x = x.max(0);
+                                        y = y.max(0);
+                                    }
                                     let _ = popup.set_position(tauri::PhysicalPosition::new(x, y));
+                                    prect = (x, y, pw, ph);
                                 }
                                 let _ = popup.show();
+                                start_popup_watch(
+                                    app.clone(), tray_gen.clone(),
+                                    icon_cx, icon_top, prect.0, prect.1, prect.2, prect.3,
+                                );
                             }
                         }
-                        // Hover out → hide the popup.
-                        TrayIconEvent::Leave { .. } => {
-                            if let Some(popup) = app.get_webview_window("notify") {
-                                let _ = popup.hide();
-                            }
-                        }
+                        // Hover out is handled by the cursor-poll watcher, not this
+                        // (flaky) tray Leave event — intentionally a no-op.
+                        TrayIconEvent::Leave { .. } => {}
                         // Left click → open the main window + acknowledge (stop flash).
                         TrayIconEvent::Click {
                             button: MouseButton::Left,
@@ -980,6 +1120,7 @@ pub fn run() {
                             ..
                         } => {
                             tray_flash.store(false, std::sync::atomic::Ordering::Relaxed);
+                            tray_gen.fetch_add(1, std::sync::atomic::Ordering::SeqCst); // stop watcher
                             if let Some(popup) = app.get_webview_window("notify") {
                                 let _ = popup.hide();
                             }
@@ -993,15 +1134,12 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Hide the notification popup when it loses focus (click elsewhere).
-            if let Some(popup) = app.get_webview_window("notify") {
-                let popup_clone = popup.clone();
-                popup.on_window_event(move |event| {
-                    if let tauri::WindowEvent::Focused(false) = event {
-                        let _ = popup_clone.hide();
-                    }
-                });
-            }
+            // NOTE: deliberately NO `Focused(false) → hide` handler. The popup's
+            // lifecycle is owned entirely by hover-intent (tray Leave + the
+            // popup's own mouseenter/leave → `schedule_popup_hide`). A focus-loss
+            // hide is an independent path that fires spuriously right after
+            // `show()` (the popup never reliably holds focus) and bypasses the
+            // grace delay, causing the popup to vanish mid-travel ("断触").
 
             // Window close -> hide to tray or exit based on config
             let close_config = config.clone();
@@ -1018,17 +1156,9 @@ pub fn run() {
                 });
             }
 
-            app.manage(state);
-            app.manage(config);
-            app.manage(timer_state);
-            app.manage(cmd_tx);
-            app.manage(templates_for_cmd);
-            app.manage(notify_list);
-            app.manage(flashing);
-            app.manage(notify_tx);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, timer_command, list_windows, select_window, single_capture, capture_preview, test_recognize, test_alert, update_item_names, item_names_count, game_data_version, get_notifications, clear_notifications, test_notification, get_autostart, set_autostart, uninstall_clean, check_for_update, install_update])
+        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, timer_command, list_windows, select_window, single_capture, capture_preview, test_recognize, test_alert, update_item_names, item_names_count, game_data_version, get_notifications, clear_notifications, open_main_navigate, get_autostart, set_autostart, uninstall_clean, check_for_update, install_update])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
