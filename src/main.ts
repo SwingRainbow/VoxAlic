@@ -20,6 +20,8 @@ interface ArbitrationAlert {
 
 interface AppConfig {
   close_to_tray: boolean;
+  worldstate_source: string;
+  notify_bark_url: string;
   fissure_alerts: FissureAlert[];
   cycle_alerts: CycleAlert[];
   arbitration_alerts: ArbitrationAlert[];
@@ -151,6 +153,8 @@ interface ArbitrationInfo {
   expiry_ms: number;
   remain_ms: number;
   remain_str: string;
+  all_missions: string[];
+  all_planets: string[];
 }
 
 interface AppStatePayload {
@@ -734,8 +738,19 @@ window.addEventListener('DOMContentLoaded', () => {
   });
 
   // Refresh button
-  document.getElementById('btn-refresh')!.addEventListener('click', () => {
-    invoke('refresh_now');
+  const refreshBtn = document.getElementById('btn-refresh') as HTMLButtonElement;
+  refreshBtn.addEventListener('click', () => {
+    refreshBtn.disabled = true;
+    refreshBtn.textContent = '刷新中…';
+    invoke('refresh_now')
+      .then(() => {
+        refreshBtn.textContent = '✅ 刷新成功';
+        setTimeout(() => { refreshBtn.textContent = '刷新数据'; refreshBtn.disabled = false; }, 2000);
+      })
+      .catch(err => {
+        refreshBtn.textContent = String(err).slice(0, 20);
+        setTimeout(() => { refreshBtn.textContent = '刷新数据'; refreshBtn.disabled = false; }, 3000);
+      });
   });
 
   // Filters
@@ -755,6 +770,10 @@ window.addEventListener('DOMContentLoaded', () => {
     // Init alert-method radio (default "focus" if unset)
     document.querySelectorAll<HTMLInputElement>('input[name="alert-method"]').forEach(r => {
       r.checked = r.value === (mt.alert_method || 'focus');
+    });
+    // Init worldstate-source radio (default "official" if unset)
+    document.querySelectorAll<HTMLInputElement>('input[name="worldstate-source"]').forEach(r => {
+      r.checked = r.value === (cfg.worldstate_source || 'official');
     });
     // Init custom reminder text inputs
     (document.getElementById('checkpoint-text') as HTMLInputElement).value = mt.checkpoint_alert_text ?? '';
@@ -777,6 +796,59 @@ window.addEventListener('DOMContentLoaded', () => {
   invoke<boolean>('get_autostart').then(v => { autostartToggle.checked = v; });
   autostartToggle.addEventListener('change', () => {
     invoke('set_autostart', { enabled: autostartToggle.checked });
+  });
+
+  // ── Phone notification (Bark) ────────────────────────────────────────────
+
+  const barkInput = document.getElementById('setting-bark-url') as HTMLInputElement;
+  const barkStatus = document.getElementById('bark-status') as HTMLSpanElement;
+  const barkModalStatus = document.getElementById('bark-modal-status') as HTMLSpanElement;
+  const barkSaveBtn = document.getElementById('btn-save-bark-url') as HTMLButtonElement;
+  const barkModal = document.getElementById('bark-config-modal')!;
+
+  function updateBarkStatus() {
+    const url = barkInput.value.trim();
+    barkStatus.textContent = url ? '✅ 已配置' : '';
+  }
+
+  invoke<string>('get_bark_url').then(url => {
+    if (url) {
+      barkInput.value = url;
+      updateBarkStatus();
+    }
+  });
+
+  document.getElementById('btn-open-bark-modal')!.addEventListener('click', () => {
+    barkModalStatus.textContent = '';
+    barkModal.classList.remove('hidden');
+  });
+
+  document.getElementById('btn-close-bark-modal')!.addEventListener('click', () => {
+    barkModal.classList.add('hidden');
+  });
+
+  barkSaveBtn.addEventListener('click', () => {
+    if (!currentConfig) return;
+    const url = barkInput.value.trim();
+    const newCfg = { ...currentConfig, notify_bark_url: url };
+    currentConfig = newCfg;
+    invoke('set_config', { config: newCfg }).then(() => {
+      barkModalStatus.textContent = url ? '✅ 已保存' : '已清空';
+      updateBarkStatus();
+      setTimeout(() => { barkModalStatus.textContent = ''; }, 2500);
+    }).catch(err => {
+      barkModalStatus.textContent = String(err).slice(0, 30);
+    });
+  });
+
+  document.getElementById('btn-test-bark')!.addEventListener('click', () => {
+    barkModalStatus.textContent = '发送中…';
+    invoke<string>('test_phone_push').then(msg => {
+      barkModalStatus.textContent = msg;
+      setTimeout(() => { barkModalStatus.textContent = ''; }, 3000);
+    }).catch(err => {
+      barkModalStatus.textContent = String(err).slice(0, 30);
+    });
   });
 
   // Settings: save on change
@@ -839,6 +911,26 @@ window.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('input[name="alert-method"]').forEach(radio => {
     radio.addEventListener('change', function(this: HTMLInputElement) {
       if (this.checked) updateTimerConfig({ alert_method: this.value });
+    });
+  });
+
+  // Worldstate data source: official vs mirror — switch + refresh
+  const wsSourceStatus = document.getElementById('worldstate-source-status')!;
+  document.querySelectorAll('input[name="worldstate-source"]').forEach(radio => {
+    radio.addEventListener('change', function(this: HTMLInputElement) {
+      if (!this.checked || !currentConfig) return;
+      const newCfg = { ...currentConfig, worldstate_source: this.value };
+      currentConfig = newCfg;
+      invoke('set_config', { config: newCfg }).then(() => {
+        wsSourceStatus.textContent = '已切换 · 正在刷新…';
+        return invoke('refresh_now');
+      }).then(() => {
+        wsSourceStatus.textContent = '✅ 刷新成功';
+        setTimeout(() => { wsSourceStatus.textContent = ''; }, 3000);
+      }).catch(err => {
+        wsSourceStatus.textContent = String(err);
+        setTimeout(() => { wsSourceStatus.textContent = ''; }, 5000);
+      });
     });
   });
 
@@ -931,11 +1023,19 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // Test the currently selected alert method
   const alertTestStatus = document.getElementById('alert-test-status')!;
+  let alertTestTimer: ReturnType<typeof setTimeout> | null = null;
   document.getElementById('btn-test-alert')!.addEventListener('click', () => {
+    if (alertTestTimer) { clearTimeout(alertTestTimer); alertTestTimer = null; }
     alertTestStatus.textContent = '测试中…';
     invoke('test_alert')
-      .then(() => { alertTestStatus.textContent = '✅ 已触发'; })
-      .catch(err => { alertTestStatus.textContent = String(err); });
+      .then(() => {
+        alertTestStatus.textContent = '✅ 已触发';
+        alertTestTimer = setTimeout(() => { alertTestStatus.textContent = ''; alertTestTimer = null; }, 5000);
+      })
+      .catch(err => {
+        alertTestStatus.textContent = String(err);
+        alertTestTimer = setTimeout(() => { alertTestStatus.textContent = ''; alertTestTimer = null; }, 5000);
+      });
   });
 
   // Baro card: click to expand/collapse items table (only when active)
@@ -1014,9 +1114,9 @@ window.addEventListener('DOMContentLoaded', () => {
 
 // ── Subscription (alert rules) management ──────────────────────────────────
 
-const FISSURE_TIERS = ['', '古纪', '前纪', '中纪', '后纪', '全能', '恐惧'];
+const FISSURE_TIERS = ['', '古纪', '前纪', '中纪', '后纪', '安魂', '全能'];
 const FISSURE_TIER_LABELS: Record<string, string> = {
-  '': '任意遗物', '恐惧': '恐惧（钢铁）',
+  '': '任意遗物',
 };
 const FISSURE_DIFFICULTIES = ['', 'normal', 'hard', 'storm'];
 const FISSURE_DIFF_LABELS: Record<string, string> = {
@@ -1044,20 +1144,17 @@ function availableMissionTypes(): string[] {
 }
 
 // Derive available arbitration mission types and nodes from current + upcoming slots.
+// Use the full arbitration node catalogue (all_missions / all_planets from Rust)
+// so the alert-rule dropdown shows every possible type, not just the 4 slots
+// currently visible.
 function availableArbMissions(): string[] {
-  if (!currentData?.arbitration) return [''];
-  const arb = currentData.arbitration;
-  const slots = [arb.current, ...arb.upcoming];
-  const types = [...new Set(slots.map(s => s.mission).filter(Boolean))].sort();
-  return ['', ...types];
+  if (!currentData?.arbitration?.all_missions?.length) return [''];
+  return ['', ...currentData.arbitration.all_missions];
 }
 
 function availableArbPlanets(): string[] {
-  if (!currentData?.arbitration) return [''];
-  const arb = currentData.arbitration;
-  const slots = [arb.current, ...arb.upcoming];
-  const planets = [...new Set(slots.map(s => s.planet).filter(Boolean))].sort();
-  return ['', ...planets];
+  if (!currentData?.arbitration?.all_planets?.length) return [''];
+  return ['', ...currentData.arbitration.all_planets];
 }
 
 function renderArbitrationAlerts(list: ArbitrationAlert[], container: HTMLElement) {

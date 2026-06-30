@@ -170,7 +170,7 @@ impl Default for MissionTimerConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FissureAlert {
     #[serde(default)]
-    pub tier: String,          // "古纪"|"前纪"|"中纪"|"后纪"|"全能"|"恐惧"|""
+    pub tier: String,          // "古纪"|"前纪"|"中纪"|"后纪"|"安魂"|"全能"|""
     #[serde(default)]
     pub mission_type: String,  // "生存"|"防御"|...|""
     #[serde(default)]
@@ -199,6 +199,8 @@ pub struct ArbitrationAlert {
 pub struct AppConfig {
     #[serde(default = "default_close_to_tray")]
     pub close_to_tray: bool,
+    #[serde(default = "default_worldstate_source")]
+    pub worldstate_source: String,
     #[serde(default)]
     pub mission_timer: MissionTimerConfig,
     /// Fissure notification rules (toast when a matching fissure appears).
@@ -210,20 +212,28 @@ pub struct AppConfig {
     /// Arbitration notification rules (toast when arbitration changes to a match).
     #[serde(default)]
     pub arbitration_alerts: Vec<ArbitrationAlert>,
+    /// Bark push URL for phone notifications (empty = disabled).
+    #[serde(default)]
+    pub notify_bark_url: String,
 }
 
 fn default_close_to_tray() -> bool {
     true
+}
+fn default_worldstate_source() -> String {
+    "official".into()
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             close_to_tray: true,
+            worldstate_source: "official".into(),
             mission_timer: MissionTimerConfig::default(),
             fissure_alerts: Vec::new(),
             cycle_alerts: Vec::new(),
             arbitration_alerts: Vec::new(),
+            notify_bark_url: String::new(),
         }
     }
 }

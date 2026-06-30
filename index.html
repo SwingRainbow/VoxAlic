@@ -92,6 +92,51 @@
       </div>
 
       <div class="settings-item">
+        <div class="settings-label">数据源</div>
+        <div class="alert-method-row">
+          <label class="radio-inline"><input type="radio" name="worldstate-source" value="official" checked> 官方源</label>
+          <label class="radio-inline"><input type="radio" name="worldstate-source" value="mirror"> 镜像源</label>
+          <span class="calib-result" id="worldstate-source-status"></span>
+        </div>
+      </div>
+
+      <div class="settings-item">
+        <div class="settings-label">手机通知</div>
+        <div class="alert-method-row">
+          <button class="timer-btn-sm" id="btn-open-bark-modal">配置</button>
+          <span class="calib-result" id="bark-status"></span>
+        </div>
+      </div>
+
+      <!-- Bark config popup -->
+      <div id="bark-config-modal" class="modal-overlay hidden">
+        <div class="modal-box">
+          <div class="modal-title">手机通知配置</div>
+          <label class="settings-text-row">
+            <span>Bark URL</span>
+            <input type="text" id="setting-bark-url" placeholder="https://api.day.app/你的Key" />
+          </label>
+          <div class="modal-actions">
+            <button class="timer-btn-sm" id="btn-test-bark">测试推送</button>
+            <button class="timer-btn-sm" id="btn-save-bark-url">保存</button>
+            <button class="timer-btn-sm" id="btn-close-bark-modal">关闭</button>
+            <span class="calib-result" id="bark-modal-status" style="margin-left:8px"></span>
+          </div>
+          <details class="bark-guide" style="margin-top:10px">
+            <summary style="font-size:11px;color:var(--text-dim);cursor:pointer">📱 使用指南</summary>
+            <ol style="font-size:11px;color:var(--text-dim);margin:6px 0 0 0;padding-left:18px;line-height:1.7">
+              <li>App Store 搜索 <b>Bark</b> 下载安装（免费）</li>
+              <li>打开 Bark，点右上角 <b>☁️ 云朵图标</b></li>
+              <li>在弹出的菜单中选择 <b>api.day.app</b></li>
+              <li>点击 <b>复制地址和 Key</b></li>
+              <li>粘贴到上方输入框，点击 <b>保存</b></li>
+              <li>点击 <b>测试推送</b> — 手机收到通知即配置成功</li>
+            </ol>
+          </details>
+        </div>
+      </div>
+
+      <div class="settings-item">
         <div class="settings-label">软件更新</div>
         <div class="alert-method-row">
           <span id="update-cur-version" style="color:var(--text-dim)">当前版本 --</span>
@@ -116,7 +161,6 @@
       <div class="sub-unified-section">
         <div class="sub-unified-head">
           <span>裂缝订阅</span>
-          <span class="sub-unified-desc">出现匹配裂缝时通知</span>
           <button class="timer-btn-sm" id="btn-add-fissure-alert">+ 添加</button>
         </div>
         <div id="fissure-alerts-list" class="alert-rules-list"></div>
@@ -124,7 +168,6 @@
       <div class="sub-unified-section">
         <div class="sub-unified-head">
           <span>周期订阅</span>
-          <span class="sub-unified-desc">世界状态切换时通知</span>
           <button class="timer-btn-sm" id="btn-add-cycle-alert">+ 添加</button>
         </div>
         <div id="cycle-alerts-list" class="alert-rules-list"></div>
@@ -132,7 +175,6 @@
       <div class="sub-unified-section">
         <div class="sub-unified-head">
           <span>仲裁订阅</span>
-          <span class="sub-unified-desc">仲裁轮换到匹配任务时通知</span>
           <button class="timer-btn-sm" id="btn-add-arb-alert">+ 添加</button>
         </div>
         <div id="arb-alerts-list" class="alert-rules-list"></div>

@@ -5,6 +5,7 @@ mod item_i18n;
 mod mission_timer;
 mod models;
 mod ocr;
+mod phone_push;
 mod state;
 mod window;
 
@@ -422,8 +423,10 @@ async fn fetch_store_emit(
     state: &SharedState,
     timer: &MissionTimerShared,
     handle: &tauri::AppHandle,
+    cfg: &SharedConfig,
 ) -> Result<(), String> {
-    let data = fetch_worldstate().await?;
+    let source = cfg.read().unwrap().worldstate_source.clone();
+    let data = fetch_worldstate(&source).await?;
     let (normal, hard, storms) = parse_fissures(&data);
     let cycles = parse_cycles(&data);
     let baro = parse_void_trader(&data);
@@ -452,8 +455,8 @@ async fn fetch_store_emit(
 }
 
 #[tauri::command]
-async fn refresh_now(state: tauri::State<'_, SharedState>, timer_state: tauri::State<'_, MissionTimerShared>, app: tauri::AppHandle) -> Result<(), String> {
-    fetch_store_emit(&state, &timer_state, &app).await
+async fn refresh_now(state: tauri::State<'_, SharedState>, timer_state: tauri::State<'_, MissionTimerShared>, app: tauri::AppHandle, config: tauri::State<'_, SharedConfig>) -> Result<(), String> {
+    fetch_store_emit(&state, &timer_state, &app, &config).await
 }
 
 #[tauri::command]
@@ -768,6 +771,21 @@ fn clear_notifications(list: tauri::State<'_, NotifyList>, flashing: tauri::Stat
     flashing.store(false, std::sync::atomic::Ordering::Relaxed);
 }
 
+#[tauri::command]
+fn get_bark_url(cfg: tauri::State<'_, SharedConfig>) -> String {
+    cfg.read().unwrap().notify_bark_url.clone()
+}
+
+#[tauri::command]
+async fn test_phone_push(cfg: tauri::State<'_, SharedConfig>) -> Result<String, String> {
+    let u = cfg.read().unwrap().notify_bark_url.clone();
+    if u.is_empty() {
+        return Err("未配置 Bark URL".into());
+    }
+    phone_push::push(&u, "VoxAlic", "✅ 手机通知测试成功").await;
+    Ok("已发送".into())
+}
+
 /// Inject a sample subscription notification so the user can preview the tray
 /// flash + hover popup without waiting for a real fissure to appear.
 // ── In-app updater ───────────────────────────────────────────────────────────
@@ -824,7 +842,39 @@ async fn install_update(app: tauri::AppHandle, source: String) -> Result<(), Str
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // ── Resolve app_data_dir before Tauri creates any window ──
+    // On Windows Tauri v2's app_data_dir() uses RoamingAppData (%APPDATA%).
+    // We compute it manually so we can load config and manage ALL state via
+    // Builder::manage() BEFORE .setup() — eliminating the race where
+    // webviews load and invoke commands before app.manage() inside setup.
+    let app_data_dir = {
+        let roaming = std::env::var("APPDATA").unwrap_or_else(|_| {
+            let home = std::env::var("USERPROFILE").unwrap_or_default();
+            format!("{}\\AppData\\Roaming", home)
+        });
+        std::path::PathBuf::from(roaming).join("com.voxalic.app")
+    };
+    let _ = std::fs::create_dir_all(&app_data_dir); // ensure exists
+
+    // ── Load config before Tauri creates any window ──
+    let config: SharedConfig = Arc::new(StdRwLock::new(load_config(&app_data_dir)));
+
+    // ── Create all managed state before Tauri creates any window ──
+    let state: SharedState = SharedState::default();
+    let templates_arc: Arc<DigitTemplates> = Arc::new(DigitTemplates::load());
+    let timer_state: MissionTimerShared = Arc::new(StdRwLock::new(MissionTimerState::new()));
+    let notify_list: NotifyList = Arc::new(StdRwLock::new(Vec::new()));
+    let flashing: FlashFlag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let hide_gen: HideGen = Arc::new(std::sync::atomic::AtomicU64::new(0));
+
     tauri::Builder::default()
+        .manage(state.clone())
+        .manage(config.clone())
+        .manage(templates_arc.clone())
+        .manage(timer_state.clone())
+        .manage(notify_list.clone())
+        .manage(flashing.clone())
+        .manage(hide_gen.clone())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -834,27 +884,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .setup(|app| {
-            let state: SharedState = SharedState::default();
-            app.manage(state.clone());
-
-            // Load config
-            let app_data_dir = app.path().app_data_dir().expect("app data dir");
-            let config: SharedConfig = Arc::new(StdRwLock::new(load_config(&app_data_dir)));
-            app.manage(config.clone());
-
+        .setup(move |app| {
             // Load item-name 中文 table (user override file, else embedded default).
             item_i18n::init(&app_data_dir);
 
-            // Load digit templates for OCR
-            let templates_arc = Arc::new(DigitTemplates::load());
-            // Shared with the timer thread AND the test_recognize command.
-            let templates_for_cmd = templates_arc.clone();
-            app.manage(templates_for_cmd);
-
-            // Mission timer shared state + command channel
-            let timer_state: MissionTimerShared = Arc::new(StdRwLock::new(MissionTimerState::new()));
-            app.manage(timer_state.clone());
+            // Mission timer command channel
             let timer_config = config.clone();
             let timer_shared = timer_state.clone();
             let (log_tx, log_rx) = mpsc::channel::<String>();
@@ -866,13 +900,10 @@ pub fn run() {
 
             // Subscription notifications: fissure/cycle/arbitration matches go to
             // the tray (red-dot + flashing + click popup), NOT a toast.
-            let notify_list: NotifyList = Arc::new(StdRwLock::new(Vec::new()));
-            app.manage(notify_list.clone());
-            let flashing: FlashFlag = Arc::new(std::sync::atomic::AtomicBool::new(false));
-            app.manage(flashing.clone());
-            let hide_gen: HideGen = Arc::new(std::sync::atomic::AtomicU64::new(0));
-            app.manage(hide_gen.clone());
             let (notify_tx, notify_rx) = mpsc::channel::<SubNotify>();
+
+            // Phone push config: Bark URL. Empty = disabled.
+            let bark_cfg = config.clone();
 
             // Tray icons: normal + a red-dot variant, alternated to "flash".
             // Build an *owned* (`'static`) copy — the borrowed `default_window_icon`
@@ -895,9 +926,18 @@ pub fn run() {
 
             // Alert (toast) forwarding thread — mission timer only.
             let alert_handle = app.handle().clone();
+            let alert_bark = bark_cfg.clone();
             std::thread::spawn(move || {
                 while let Ok(msg) = alert_rx.recv() {
                     show_toast(&alert_handle, &msg.title, &msg.body);
+                    let u = alert_bark.read().unwrap().notify_bark_url.clone();
+                    if !u.is_empty() {
+                        let title = msg.title.clone();
+                        let body = msg.body.clone();
+                        tauri::async_runtime::spawn(async move {
+                            phone_push::push(&u, &title, &body).await;
+                        });
+                    }
                 }
             });
 
@@ -906,16 +946,25 @@ pub fn run() {
             let notify_handle = app.handle().clone();
             let notify_store = notify_list.clone();
             let notify_flag = flashing.clone();
+            let sub_bark = bark_cfg.clone();
             std::thread::spawn(move || {
                 while let Ok(msg) = notify_rx.recv() {
                     let snapshot = {
                         let mut list = notify_store.write().unwrap();
-                        list.insert(0, msg);
+                        list.insert(0, msg.clone());
                         if list.len() > 50 { list.truncate(50); }
                         list.clone()
                     };
                     let _ = notify_handle.emit("sub-notify", snapshot);
                     notify_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                    let u = sub_bark.read().unwrap().notify_bark_url.clone();
+                    if !u.is_empty() {
+                        let title = msg.title.clone();
+                        let body = msg.detail.clone();
+                        tauri::async_runtime::spawn(async move {
+                            phone_push::push(&u, &title, &body).await;
+                        });
+                    }
                 }
             });
 
@@ -971,7 +1020,7 @@ pub fn run() {
                 let mut interval = tokio::time::interval(Duration::from_secs(REFRESH_SEC as u64));
                 loop {
                     interval.tick().await;
-                    if fetch_store_emit(&fetch_state, &fetch_timer, &fetch_handle).await.is_ok() {
+                    if fetch_store_emit(&fetch_state, &fetch_timer, &fetch_handle, &fetch_config).await.is_ok() {
                         let now = now_ms();
                         let (all_fissures, cycles, fissure_alerts, cycle_alerts, arb_alerts) = {
                             let s = fetch_state.read().await;
@@ -1025,6 +1074,7 @@ pub fn run() {
 
             let tray_state = state.clone();
             let tray_timer = timer_state.clone();
+            let tray_config = config.clone();
             let menu_flash = flashing.clone();
             let tray_flash = flashing.clone();
             let tray_notify = notify_list.clone();
@@ -1046,8 +1096,9 @@ pub fn run() {
                         let state = tray_state.clone();
                         let timer = tray_timer.clone();
                         let handle = app.clone();
+                        let cfg = tray_config.clone();
                         tauri::async_runtime::spawn(async move {
-                            let _ = fetch_store_emit(&state, &timer, &handle).await;
+                            let _ = fetch_store_emit(&state, &timer, &handle, &cfg).await;
                         });
                     }
                     "quit" => app.exit(0),
@@ -1158,7 +1209,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, timer_command, list_windows, select_window, single_capture, capture_preview, test_recognize, test_alert, update_item_names, item_names_count, game_data_version, get_notifications, clear_notifications, open_main_navigate, get_autostart, set_autostart, uninstall_clean, check_for_update, install_update])
+        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, timer_command, list_windows, select_window, single_capture, capture_preview, test_recognize, test_alert, update_item_names, item_names_count, game_data_version, get_notifications, clear_notifications, open_main_navigate, get_autostart, set_autostart, uninstall_clean, check_for_update, install_update, get_bark_url, test_phone_push])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

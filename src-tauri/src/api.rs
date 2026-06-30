@@ -8,6 +8,7 @@ use std::sync::OnceLock;
 const SEC_MS_THRESHOLD: i64 = 10_i64.pow(11);
 const EXPIRY_WARN_MS: i64 = 300_000;
 const API_URL: &str = "https://api.warframe.com/cdn/worldState.php";
+const API_URL_MIRROR: &str = "https://oracle.browse.wf/worldState.json";
 
 const VALLIS_EPOCH: i64 = 1_541_837_628_000;
 const VALLIS_CYCLE: i64 = 1_600_000;
@@ -1750,30 +1751,70 @@ pub fn parse_arbitration(now_ms: i64) -> Option<ArbitrationInfo> {
         .filter_map(|i| arb_slot_at(d, hour_idx + i))
         .collect();
 
+    // Collect all unique mission types + planets from every arbitration node
+    // so the frontend alert-rule dropdown shows the full set, not just what's
+    // in the current 4-hour window.
+    let mut all_missions: Vec<String> = d.node_info.values()
+        .map(|n| n.mission_zh.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    all_missions.sort();
+    let mut all_planets: Vec<String> = d.node_info.values()
+        .map(|n| n.system_zh.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    all_planets.sort();
+
     Some(ArbitrationInfo {
         current,
         upcoming,
         expiry_ms,
         remain_ms,
         remain_str: fmt_remain(remain_ms),
+        all_missions,
+        all_planets,
     })
 }
 
-/// Fetch the Warframe worldstate JSON from the CDN.
-pub async fn fetch_worldstate() -> Result<Value, String> {
+/// Fetch the Warframe worldstate JSON.
+///
+/// `source` selects the endpoint: `"official"` | `"mirror"`. On failure the
+/// other source is tried as a fallback before returning an error.
+pub async fn fetch_worldstate(source: &str) -> Result<Value, String> {
     let client = reqwest::Client::builder()
         .user_agent("Warframe/1.0")
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| e.to_string())?;
 
+    let (primary, fallback) = if source == "mirror" {
+        (API_URL_MIRROR, API_URL)
+    } else {
+        (API_URL, API_URL_MIRROR)
+    };
+
+    match client.get(primary).send().await {
+        Ok(resp) => {
+            match resp.json::<Value>().await {
+                Ok(json) => return Ok(json),
+                Err(_e) => {
+                    eprintln!("worldstate primary parse error: {_e}, trying fallback");
+                }
+            }
+        }
+        Err(_e) => {
+            eprintln!("worldstate primary fetch error: {_e}, trying fallback");
+        }
+    }
+
+    // Fallback
     let resp = client
-        .get(API_URL)
+        .get(fallback)
         .send()
         .await
         .map_err(|e| e.to_string())?;
-
     let json: Value = resp.json().await.map_err(|e| e.to_string())?;
-
     Ok(json)
 }

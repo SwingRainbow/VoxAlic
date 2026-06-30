@@ -159,6 +159,11 @@ pub struct ArbitrationInfo {
     pub expiry_ms: i64,      // when current slot ends
     pub remain_ms: i64,
     pub remain_str: String,
+    /// All distinct mission types across every arbitration node (not just the
+    /// current rotation). Populated once so the alert-rule dropdown isn't
+    /// limited to whatever happens to be in the next 4 hours.
+    pub all_missions: Vec<String>,
+    pub all_planets: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
