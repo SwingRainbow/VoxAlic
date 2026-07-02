@@ -12,6 +12,10 @@ pub struct AppState {
     pub circuit: Option<CircuitInfo>,
     pub last_update: String,
     pub countdown_secs: u32,
+    /// False until the first worldstate fetch completes (success or failure).
+    /// Until then, locally-computed data (arbitration) is suppressed so it
+    /// doesn't render ahead of API-dependent panels.
+    pub initialized: bool,
 }
 
 impl AppState {
@@ -26,6 +30,7 @@ impl AppState {
             circuit: None,
             last_update: String::new(),
             countdown_secs: 0,
+            initialized: false,
         }
     }
 }

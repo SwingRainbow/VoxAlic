@@ -129,6 +129,46 @@ fn check_arbitration_alerts(
     }
 }
 
+/// Check cycle advance-notice thresholds on every tick (per-second). Fires once
+/// per phase when `remain_ms` of the current phase drops below the configured
+/// advance, before the target state begins. Currently only processes 夜灵平野.
+fn check_cycle_advance_alerts(
+    cycles: &[models::CycleInfo],
+    alerts: &[CycleAlert],
+    fired: &mut std::collections::HashSet<String>,
+    tx: &mpsc::Sender<SubNotify>,
+) {
+    for alert in alerts {
+        if alert.advance_minutes == 0 { continue; }
+        if alert.location != "夜灵平野" { continue; }
+        let Some(cycle) = cycles.iter().find(|c| c.name == alert.location) else { continue; };
+        let key = format!("{}|{}|{}", alert.location, alert.state, alert.advance_minutes);
+
+        if cycle.state == alert.state {
+            // Already in the target state — clear the flag so the next cycle's
+            // advance window can fire fresh.
+            fired.remove(&key);
+        } else {
+            // Currently in the "before" phase — check if we've crossed the threshold.
+            let threshold_ms = (alert.advance_minutes as i64) * 60 * 1000;
+            if cycle.remain_ms <= threshold_ms && !fired.contains(&key) {
+                fired.insert(key.clone());
+                let next = &alert.state;
+                let mins = alert.advance_minutes;
+                let _ = tx.send(SubNotify {
+                    kind: "cycle".into(),
+                    icon: "⏰".into(),
+                    title: format!("{} · 即将进入{}", cycle.name, next),
+                    detail: format!("还有 {} 分钟，请做好准备", mins),
+                    ts: now_ms(),
+                    node: cycle.name.clone(),
+                    sub: "".into(),
+                });
+            }
+        }
+    }
+}
+
 /// Check cycle subscriptions after each worldstate refresh. Only fires on the
 /// tick when the cycle state *transitions into* the subscribed state.
 fn check_cycle_alerts(
@@ -395,8 +435,9 @@ fn build_payload(state: &AppState, timer_state: &MissionTimerState) -> AppStateP
         c.remain_str = fmt_remain_days(c.remain_ms);
     }
 
-    // Arbitration is epoch-computed each tick — no state to carry, just recalculate.
-    let arbitration = parse_arbitration(now);
+    // Arbitration is epoch-computed each tick. Suppress until the first
+    // worldstate fetch completes so it doesn't render ahead of other panels.
+    let arbitration = if state.initialized { parse_arbitration(now) } else { None };
 
     AppStatePayload {
         normal_fissures: normal,
@@ -426,32 +467,43 @@ async fn fetch_store_emit(
     cfg: &SharedConfig,
 ) -> Result<(), String> {
     let source = cfg.read().unwrap().worldstate_source.clone();
-    let data = fetch_worldstate(&source).await?;
-    let (normal, hard, storms) = parse_fissures(&data);
-    let cycles = parse_cycles(&data);
-    let baro = parse_void_trader(&data);
-    let bounties = parse_bounties(&data);
-    let circuit = parse_circuit(&data);
-    let now_str = chrono::Local::now().format("%H:%M:%S").to_string();
-    {
-        let mut s = state.write().await;
-        s.normal_fissures = normal;
-        s.hard_fissures = hard;
-        s.storm_fissures = storms;
-        s.cycles = cycles;
-        s.baro = baro;
-        s.bounties = bounties;
-        s.circuit = circuit;
-        s.last_update = now_str;
-        s.countdown_secs = REFRESH_SEC;
+    let result = fetch_worldstate(&source).await;
+    match result {
+        Ok(data) => {
+            let (normal, hard, storms) = parse_fissures(&data);
+            let cycles = parse_cycles(&data);
+            let baro = parse_void_trader(&data);
+            let bounties = parse_bounties(&data);
+            let circuit = parse_circuit(&data);
+            let now_str = chrono::Local::now().format("%H:%M:%S").to_string();
+            {
+                let mut s = state.write().await;
+                s.normal_fissures = normal;
+                s.hard_fissures = hard;
+                s.storm_fissures = storms;
+                s.cycles = cycles;
+                s.baro = baro;
+                s.bounties = bounties;
+                s.circuit = circuit;
+                s.last_update = now_str;
+                s.countdown_secs = REFRESH_SEC;
+                s.initialized = true; // data is ready — allow local computation (arbitration) to join
+            }
+            let payload = {
+                let s = state.read().await;
+                let t = timer.read().unwrap();
+                build_payload(&s, &t)
+            };
+            let _ = handle.emit("worldstate-update", payload);
+            Ok(())
+        }
+        Err(e) => {
+            // Network failed, but allow locally-computed data to show anyway.
+            let mut s = state.write().await;
+            s.initialized = true;
+            Err(e)
+        }
     }
-    let payload = {
-        let s = state.read().await;
-        let t = timer.read().unwrap();
-        build_payload(&s, &t)
-    };
-    let _ = handle.emit("worldstate-update", payload);
-    Ok(())
 }
 
 #[tauri::command]
@@ -790,7 +842,7 @@ async fn test_phone_push(cfg: tauri::State<'_, SharedConfig>) -> Result<String, 
 /// flash + hover popup without waiting for a real fissure to appear.
 // ── In-app updater ───────────────────────────────────────────────────────────
 
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 struct UpdateInfo {
     version: String,
     notes: String,
@@ -1044,11 +1096,15 @@ pub fn run() {
             let tick_state = state.clone();
             let tick_timer = timer_state.clone();
             let tick_handle = app.handle().clone();
+            let tick_notify_tx = notify_tx.clone();
+            let tick_config = config.clone();
+            let tick_advance_fired: Arc<StdRwLock<std::collections::HashSet<String>>> =
+                Arc::new(StdRwLock::new(std::collections::HashSet::new()));
             tauri::async_runtime::spawn(async move {
                 let mut tick = tokio::time::interval(Duration::from_secs(1));
                 loop {
                     tick.tick().await;
-                    let payload = {
+                    let (payload, cycle_alerts) = {
                         let mut s = tick_state.write().await;
                         s.countdown_secs = s.countdown_secs.saturating_sub(1);
                         {
@@ -1056,9 +1112,38 @@ pub fn run() {
                             t.update_elapsed();
                         }
                         let t = tick_timer.read().unwrap();
-                        build_payload(&s, &t)
+                        let alerts = tick_config.read().unwrap().cycle_alerts.clone();
+                        (build_payload(&s, &t), alerts)
                     };
-                    let _ = tick_handle.emit("tick-update", payload);
+                    let _ = tick_handle.emit("tick-update", &payload);
+                    // Check advance-notice thresholds (夜灵平野 only for now).
+                    if !cycle_alerts.is_empty() {
+                        let mut fired = tick_advance_fired.write().unwrap();
+                        check_cycle_advance_alerts(
+                            &payload.cycles,
+                            &cycle_alerts,
+                            &mut fired,
+                            &tick_notify_tx,
+                        );
+                    }
+                }
+            });
+
+            // Auto-check for updates 3s after startup. Emits "update-available"
+            // to the main window if a newer version is found.
+            let update_handle = app.handle().clone();
+            let update_cfg = config.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                let source = update_cfg.read().unwrap().update_source.clone();
+                match build_source_updater(&update_handle, &source) {
+                    Ok(updater) => {
+                        if let Ok(Some(u)) = updater.check().await {
+                            let _ = update_handle.emit_to("main", "update-available",
+                                UpdateInfo { version: u.version, notes: u.body.unwrap_or_default() });
+                        }
+                    }
+                    Err(_) => {} // silent — network may not be ready
                 }
             });
 

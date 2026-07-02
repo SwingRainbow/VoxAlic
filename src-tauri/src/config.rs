@@ -178,12 +178,16 @@ pub struct FissureAlert {
 }
 
 /// One cycle subscription rule. Triggers when `location`'s `state` matches.
+/// `advance_minutes`: fire N minutes BEFORE the state transition (0 = on transition).
+/// Currently only effective for 夜灵平野 (Plains of Eidolon).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CycleAlert {
     #[serde(default)]
     pub location: String,  // CycleInfo.name
     #[serde(default)]
     pub state: String,     // CycleInfo.state value to match
+    #[serde(default)]
+    pub advance_minutes: u32,  // 0 = on transition, 5/10/15 = advance notice
 }
 
 /// One arbitration subscription rule. Both fields optional (empty = any).
@@ -215,6 +219,13 @@ pub struct AppConfig {
     /// Bark push URL for phone notifications (empty = disabled).
     #[serde(default)]
     pub notify_bark_url: String,
+    /// Update check source: "gitee" (fast in China) or "github".
+    #[serde(default = "default_update_source")]
+    pub update_source: String,
+}
+
+fn default_update_source() -> String {
+    "gitee".into()
 }
 
 fn default_close_to_tray() -> bool {
@@ -234,6 +245,7 @@ impl Default for AppConfig {
             cycle_alerts: Vec::new(),
             arbitration_alerts: Vec::new(),
             notify_bark_url: String::new(),
+            update_source: default_update_source(),
         }
     }
 }

@@ -13,7 +13,7 @@
 |--------|------|------|
 | 主线程 | Tauri 事件循环 | webview、托盘、窗口事件、`run_on_main_thread` 派发 |
 | Tokio 任务 · 抓取循环 | `lib.rs` setup | 每 1800s 拉 worldstate + 启动即跑一次；跑订阅检查 |
-| Tokio 任务 · 秒级 tick | `lib.rs` setup | 每 1s 递减倒计时、推进计时器 elapsed、emit `tick-update` |
+| Tokio 任务 · 秒级 tick | `lib.rs` setup | 每 1s 递减倒计时、推进计时器 elapsed、emit `tick-update`；调用 `check_cycle_advance_alerts` 检查周期提前预告 |
 | std 线程 · OCR 计时 | `mission_timer::start_timer_thread` | 截屏+OCR 状态机，`mpsc` 命令驱动 |
 | std 线程 · 日志转发 | `lib.rs` setup | `log_rx` → emit `timer-log` |
 | std 线程 · toast 转发 | `lib.rs` setup | `alert_rx` → `show_toast`（仅任务计时） |
@@ -71,15 +71,16 @@ OCR 线程(截屏→ocr→状态机) ⇄ MissionTimerShared ; checkpoint/HP ─ 
 - `check_fissure_alerts(fissures,&[FissureAlert],&mut notified,&Sender<SubNotify>)` — 命中匹配裂缝（按 `node_key:expiry` 去重）→ 发 `SubNotify`；清理过期键。被抓取循环调用。前端 `fissureSubscribed()` 镜像其匹配逻辑做列表标注。
 - `check_arbitration_alerts(...)` — 仲裁节点变更且匹配 → 发 `SubNotify`。
 - `check_cycle_alerts(...)` — 周期**状态切入**订阅态时 → 发 `SubNotify`。
-- 三者均**只发 `notify_tx`**（不再走 toast；toast 仅留给计时器）。
+- `check_cycle_advance_alerts(...)` — 周期**提前预告**（per-second tick 中）：当前状态≠目标状态且 `remain_ms ≤ advance_minutes×60×1000` 时发 `SubNotify`。按 `地点|目标状态|提前量` 去重，状态切入目标后自动清除标记。当前仅处理夜灵平野。
+- 三者（+ 提前预告）均**只发 `notify_tx`**（不再走 toast；toast 仅留给计时器）。
 
 **(b) 托盘闪烁图标生成**
 - `hole_mask(&Image) -> Vec<bool>` — 从图标四周 flood-fill 标外部透明区，剩下被 logo 包住的透明像素=镂空内芯。
 - `make_center_pulse_frames(&Image) -> Vec<Image>` — 基于 `hole_mask` + BFS 把内芯向外晕 2px(权重1/0.65/0.35)，生成「亮/暗」两帧（内芯亮红 255,45,45）。无洞时兜底整 logo 泛红。被 setup 预生成；闪烁线程循环切帧。
 
 **(c) 负载构建 + 抓取**
-- `build_payload(&AppState,&MissionTimerState) -> AppStatePayload` — 每 tick 重算裂缝/周期/Baro/赏金/回廊/仲裁的倒计时；过期周期本地自愈（`roll_forward_cycle`/`parse_vallis/duviri`）。被秒级 tick 与 `fetch_store_emit` 调用。
-- `fetch_store_emit(&SharedState,&MissionTimerShared,&AppHandle)` — 拉 worldstate→`parse_*`→写 `AppState`→`build_payload`→emit `worldstate-update`。被 `refresh_now`、抓取循环、托盘「立即刷新」调用。
+- `build_payload(&AppState,&MissionTimerState) -> AppStatePayload` — 每 tick 重算裂缝/周期/Baro/赏金/回廊的倒计时；过期周期本地自愈（`roll_forward_cycle`/`parse_vallis/duviri`）。仲裁受 `state.initialized` 控制（API 数据就绪后才计算）。被秒级 tick 与 `fetch_store_emit` 调用。
+- `fetch_store_emit(&SharedState,&MissionTimerShared,&AppHandle)` — 拉 worldstate→`parse_*`→写 `AppState`→设 `initialized=true`→`build_payload`→emit `worldstate-update`。网络失败时仍设 `initialized=true` 放行本地数据。被 `refresh_now`、抓取循环、托盘「立即刷新」调用。
 
 **(d) Tauri 命令**（均 `#[tauri::command]`）
 - `refresh_now` → `fetch_store_emit`。
@@ -111,7 +112,7 @@ OCR 线程(截屏→ocr→状态机) ⇄ MissionTimerShared ; checkpoint/HP ─ 
 - `load_config`（+ `migrate_old_default_rois` 静默升级旧 ROI）/`save_config`/`config_path`。存 `{app_data_dir}/config.json`。
 
 ### 1.5 `state.rs` — 运行时世界状态
-- `AppState{normal/hard/storm_fissures,cycles,baro,bounties,circuit,last_update,countdown_secs}`，`SharedState=Arc<tokio::RwLock<AppState>>`。被抓取写、`build_payload` 读。
+- `AppState{normal/hard/storm_fissures,cycles,baro,bounties,circuit,last_update,countdown_secs,initialized}`，`SharedState=Arc<tokio::RwLock<AppState>>`。被抓取写、`build_payload` 读。`initialized` 控制仲裁等本地计算数据在首次 API 拉取完成前不渲染。
 
 ### 1.6 `api.rs` — worldstate 抓取与解析
 - 时间/格式：`now_ms`/`to_ms`/`get_ms`/`is_active`/`fmt_remain`/`fmt_remain_baro`/`fmt_remain_days`/`fmt_dhms`。
@@ -120,7 +121,7 @@ OCR 线程(截屏→ocr→状态机) ⇄ MissionTimerShared ; checkpoint/HP ─ 
 - 周期：`find_active_syndicate`/`build_hex_cycle`/`roll_forward_cycle`(自愈)/`unknown_cycle`/`parse_vallis_cycle`(本地纪元)/`parse_duviri_cycle`(本地纪元)/`parse_zariman_cycle`/`parse_cycles`/`parse_hex_cycle`/`zariman_is_corpus`。
 - 赏金：`bounty_card`/`bounty_type_zh`/`active_rotation_of`/`reward_tier`/`bounty_title`/各 `*_rewards()`/`rewards_for`/`rarity_rank`/`reward_rotations`/`sort_pool`/`deimos_rotations`/`parse_bounty_job`/`static_bounty_job`/`synthesize_{zariman,hex,entrati_lab}_jobs`/`parse_bounties`。
 - Baro：`parse_void_trader`（物品名经 `item_i18n::translate` 兜底 `name_from_path`）。
-- 回廊：`circuit_names`/`circuit_zh`/`parse_circuit`。
+- 回廊：`circuit_names`/`circuit_zh`/`parse_circuit`（读 `EndlessXpSchedule[0].CategoryChoices`，回退 `EndlessXpChoices`；DE 在 Jade Shadows 更新中将 Choices 合并进 Schedule）。
 - 仲裁：`ArbData`/`ArbNodeInfo`/`arb_data`(内嵌时刻表)/`arb_slot_at`/`parse_arbitration`（纪元索引）。
 - 抓取：`fetch_worldstate()` → `api.warframe.com/.../worldState.php` JSON。被 `fetch_store_emit` 调。
 

@@ -1618,11 +1618,19 @@ fn circuit_zh(token: &str) -> String {
         .unwrap_or_else(|| token.to_string())
 }
 
-/// Parse the Duviri Circuit weekly rotation from `EndlessXpChoices`
-/// (EXC_NORMAL = 战甲, EXC_HARD = Incarnon 武器) + `EndlessXpSchedule` (expiry).
+/// Parse the Duviri Circuit weekly rotation. The reward choices (`CategoryChoices`)
+/// were originally a top-level `EndlessXpChoices` array; DE merged them into
+/// `EndlessXpSchedule[0].CategoryChoices` (Jade Shadows update, mid-2026).
+/// We try the new location first, then fall back to the old key for compatibility.
+/// `EXC_NORMAL` = 战甲, `EXC_HARD` = Incarnon 武器.
 /// Returns `None` when the section is absent/empty.
 pub fn parse_circuit(data: &Value) -> Option<CircuitInfo> {
-    let choices = data["EndlessXpChoices"].as_array()?;
+    // New location (post-Jade Shadows): EndlessXpSchedule[0].CategoryChoices
+    let choices = data["EndlessXpSchedule"]
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|s| s["CategoryChoices"].as_array())
+        .or_else(|| data["EndlessXpChoices"].as_array())?; // fallback: old top-level key
     let mut normal = Vec::new();
     let mut hard = Vec::new();
     for c in choices {

@@ -11,6 +11,7 @@ interface FissureAlert {
 interface CycleAlert {
   location: string;
   state: string;
+  advance_minutes: number;  // 0 = on transition, 5/10/15 = advance notice
 }
 
 interface ArbitrationAlert {
@@ -22,6 +23,7 @@ interface AppConfig {
   close_to_tray: boolean;
   worldstate_source: string;
   notify_bark_url: string;
+  update_source: string;
   fissure_alerts: FissureAlert[];
   cycle_alerts: CycleAlert[];
   arbitration_alerts: ArbitrationAlert[];
@@ -366,8 +368,7 @@ function renderCircuitPanel(circuit: CircuitInfo | null) {
     <div class="circuit-section">
       <div class="circuit-label">钢铁回廊 · 灵化之源</div>
       <div class="circuit-chips">${chips(circuit.hard)}</div>
-    </div>
-    <div class="bounty-foot">以上为无限回廊每周一刷新的<b>奖励</b>（非可用战甲/武器）：普通回廊可获这些战甲，钢铁之路可获这些武器的灵化之源。战甲名国服保留英文。</div>`;
+    </div>`;
   document.getElementById('circuit-close')!.addEventListener('click', () => {
     openCircuit = false;
     renderCircuitPanel(circuit);
@@ -691,6 +692,8 @@ function handleUpdate(payload: AppStatePayload) {
 
 // ── Event listeners ──
 window.addEventListener('DOMContentLoaded', () => {
+  // Disable the webview right-click context menu.
+  document.addEventListener('contextmenu', e => e.preventDefault());
   // Lock the 任务计时 tab in production builds (the shipped installer) but keep
   // it usable during local development (`tauri dev`). Vite sets PROD only for
   // `tauri build` output. A self-use "unlocked" installer can be produced by
@@ -774,6 +777,10 @@ window.addEventListener('DOMContentLoaded', () => {
     // Init worldstate-source radio (default "official" if unset)
     document.querySelectorAll<HTMLInputElement>('input[name="worldstate-source"]').forEach(r => {
       r.checked = r.value === (cfg.worldstate_source || 'official');
+    });
+    // Init update-source radio (default "gitee" if unset)
+    document.querySelectorAll<HTMLInputElement>('input[name="update-source"]').forEach(r => {
+      r.checked = r.value === (cfg.update_source || 'gitee');
     });
     // Init custom reminder text inputs
     (document.getElementById('checkpoint-text') as HTMLInputElement).value = mt.checkpoint_alert_text ?? '';
@@ -934,6 +941,15 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  // Update source: persist radio choice to config.
+  document.querySelectorAll('input[name="update-source"]').forEach(radio => {
+    radio.addEventListener('change', function(this: HTMLInputElement) {
+      if (!this.checked || !currentConfig) return;
+      currentConfig = { ...currentConfig, update_source: this.value };
+      invoke('set_config', { config: currentConfig });
+    });
+  });
+
   // Custom reminder text (saved on blur/change; empty falls back to default in Rust)
   document.getElementById('checkpoint-text')!.addEventListener('change', function(this: HTMLInputElement) {
     updateTimerConfig({ checkpoint_alert_text: this.value });
@@ -966,6 +982,20 @@ window.addEventListener('DOMContentLoaded', () => {
   });
   const updateSource = (): string =>
     (document.querySelector('input[name="update-source"]:checked') as HTMLInputElement | null)?.value ?? 'gitee';
+
+  // Shared handler: show the update modal with version + notes.
+  function showUpdateModal(version: string, notes: string) {
+    document.getElementById('update-modal-version')!.textContent = `最新版本：${version}`;
+    document.getElementById('update-modal-notes')!.textContent = notes;
+    updateModalStatus.textContent = '';
+    confirmUpdateBtn.disabled = false;
+    updateModal.classList.remove('hidden');
+  }
+
+  // Auto-update check fires on startup.
+  listen<{ version: string; notes: string }>('update-available', (event) => {
+    showUpdateModal(event.payload.version, event.payload.notes);
+  });
   checkUpdateBtn.addEventListener('click', () => {
     checkUpdateBtn.disabled = true;
     updateStatus.textContent = '检查中…';
@@ -973,11 +1003,7 @@ window.addEventListener('DOMContentLoaded', () => {
       .then(info => {
         if (info) {
           updateStatus.textContent = '';
-          document.getElementById('update-modal-version')!.textContent = `最新版本：${info.version}`;
-          document.getElementById('update-modal-notes')!.textContent = info.notes;
-          updateModalStatus.textContent = '';
-          confirmUpdateBtn.disabled = false;
-          updateModal.classList.remove('hidden');
+          showUpdateModal(info.version, info.notes);
         } else {
           updateStatus.textContent = '✅ 已是最新版本';
         }
@@ -1199,6 +1225,12 @@ function renderCycleAlerts(list: CycleAlert[], container: HTMLElement) {
     return;
   }
   const locations = Object.keys(CYCLE_LOCATIONS);
+  const advanceOpts = [
+    { v: 0, label: '切换时' },
+    { v: 5, label: '提前 5 分钟' },
+    { v: 10, label: '提前 10 分钟' },
+    { v: 15, label: '提前 15 分钟' },
+  ];
   container.innerHTML = list.map((a, i) => {
     const states = CYCLE_LOCATIONS[a.location] ?? CYCLE_LOCATIONS[locations[0]];
     const locSel = `<select class="rule-sel loc-sel">${locations.map(l =>
@@ -1207,7 +1239,13 @@ function renderCycleAlerts(list: CycleAlert[], container: HTMLElement) {
     const stateSel = `<select class="rule-sel state-sel">${states.map(s =>
       `<option value="${s}"${s === a.state ? ' selected' : ''}>${s}</option>`
     ).join('')}</select>`;
-    return `<div class="alert-rule-row" data-index="${i}">${locSel}进入${stateSel}<button class="rule-del timer-btn-sm" data-index="${i}">删除</button></div>`;
+    // Advance-notice dropdown — only meaningful for 夜灵平野 for now.
+    const advanceSel = a.location === '夜灵平野'
+      ? `<select class="rule-sel advance-sel">${advanceOpts.map(o =>
+          `<option value="${o.v}"${o.v === (a.advance_minutes || 0) ? ' selected' : ''}>${o.label}</option>`
+        ).join('')}</select>`
+      : '';
+    return `<div class="alert-rule-row" data-index="${i}">${locSel}进入${stateSel}${advanceSel}<button class="rule-del timer-btn-sm" data-index="${i}">删除</button></div>`;
   }).join('');
 }
 
@@ -1242,7 +1280,7 @@ function setupAlerts(): () => void {
   document.getElementById('btn-add-cycle-alert')!.addEventListener('click', () => {
     if (!currentConfig) return;
     const loc = '夜灵平野';
-    currentConfig.cycle_alerts = [...currentConfig.cycle_alerts, { location: loc, state: CYCLE_LOCATIONS[loc][0] }];
+    currentConfig.cycle_alerts = [...currentConfig.cycle_alerts, { location: loc, state: CYCLE_LOCATIONS[loc][0], advance_minutes: 0 }];
     refresh();
     saveAlerts();
   });
@@ -1287,9 +1325,13 @@ function setupAlerts(): () => void {
     if ((e.target as HTMLElement).classList.contains('loc-sel')) {
       rule.location = (e.target as HTMLSelectElement).value;
       rule.state = CYCLE_LOCATIONS[rule.location][0];
+      // Reset advance when switching away from 夜灵平野 (only Plains supports it).
+      if (rule.location !== '夜灵平野') rule.advance_minutes = 0;
       refresh();
     } else if ((e.target as HTMLElement).classList.contains('state-sel')) {
       rule.state = (e.target as HTMLSelectElement).value;
+    } else if ((e.target as HTMLElement).classList.contains('advance-sel')) {
+      rule.advance_minutes = parseInt((e.target as HTMLSelectElement).value);
     }
     saveAlerts();
   });
