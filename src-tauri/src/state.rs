@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::models::{Fissure, CycleInfo, BaroInfo, BountyInfo, CircuitInfo};
+use crate::models::{Fissure, CycleInfo, BaroInfo, BountyInfo, CircuitInfo, AppStatePayload};
 
 pub struct AppState {
     pub normal_fissures: Vec<Fissure>,
@@ -16,6 +16,13 @@ pub struct AppState {
     /// Until then, locally-computed data (arbitration) is suppressed so it
     /// doesn't render ahead of API-dependent panels.
     pub initialized: bool,
+    /// Wall-clock timestamp (ms) of the last completed worldstate fetch.
+    /// 0 before the first fetch — tick loop derives countdown as 0
+    /// ("refresh overdue"), which is semantically correct at startup.
+    pub last_fetch_wall_ms: i64,
+    /// Cached payload rebuilt on each API fetch and mutated in-place on each
+    /// tick — avoids cloning the full fissure/cycle/bounty vecs every second.
+    pub cached_payload: AppStatePayload,
 }
 
 impl AppState {
@@ -31,6 +38,8 @@ impl AppState {
             last_update: String::new(),
             countdown_secs: 0,
             initialized: false,
+            last_fetch_wall_ms: 0,
+            cached_payload: AppStatePayload::default(),
         }
     }
 }

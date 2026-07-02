@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::sync::RwLock as StdRwLock;
 use std::time::Duration;
 use state::{AppState, SharedState};
-use models::AppStatePayload;
+use models::{AppStatePayload, MissionTimerPayload};
 use config::{AppConfig, FissureAlert, CycleAlert, ArbitrationAlert, load_config, save_config};
 use api::{fetch_worldstate, parse_fissures, parse_cycles, parse_void_trader, parse_bounties, parse_circuit, parse_arbitration, parse_vallis_cycle, parse_duviri_cycle, fmt_remain, fmt_remain_baro, fmt_remain_days, now_ms};
 use std::sync::mpsc;
@@ -199,9 +199,17 @@ fn check_cycle_alerts(
     }
 }
 
+/// A type-tag so Tauri can tell this `Arc<AtomicBool>` apart from `flashing`
+/// (both would otherwise be `Arc<AtomicBool>` → "state already managed" panic).
+struct RefreshGuard(Arc<std::sync::atomic::AtomicBool>);
+
 /// Type aliases for the managed notification state.
 type NotifyList = Arc<StdRwLock<Vec<SubNotify>>>;
 type FlashFlag = Arc<std::sync::atomic::AtomicBool>;
+/// Shared cycle-state history for `check_cycle_alerts` — used by both the
+/// fetch loop and the tick loop (gap recovery) so a sleep→wake doesn't miss
+/// a state transition.
+type PrevCycleStates = Arc<StdRwLock<std::collections::HashMap<String, String>>>;
 /// Generation counter that owns the lifetime of the popup-watch thread. Bumped by
 /// a new tray `Enter` and by every explicit hide (left-click, item click-through,
 /// empty-list), so any stale watcher exits on its next poll.
@@ -454,6 +462,67 @@ fn build_payload(state: &AppState, timer_state: &MissionTimerState) -> AppStateP
     }
 }
 
+/// Update all time-dependent fields of a cached `AppStatePayload` in-place.
+/// Called every tick instead of rebuilding from scratch via [`build_payload`],
+/// so the 7 Vec clones + full re-allocation are avoided. Only `fmt_remain`
+/// strings are re-allocated (they change every second regardless).
+fn refresh_cached_payload(
+    p: &mut AppStatePayload,
+    now: i64,
+    timer_payload: &MissionTimerPayload,
+    countdown_secs: u32,
+    last_update: &str,
+    initialized: bool,
+) {
+    for f in p.normal_fissures.iter_mut()
+        .chain(p.hard_fissures.iter_mut())
+        .chain(p.storm_fissures.iter_mut())
+    {
+        let remain = f.expiry_ms - now;
+        f.remain_ms = remain;
+        f.remain_str = fmt_remain(remain);
+        f.is_expiring = remain > 0 && remain < 300_000;
+    }
+    for c in &mut p.cycles {
+        let remain = c.expiry_ms - now;
+        if remain <= 0 {
+            if c.name == "奥布山谷" {
+                *c = parse_vallis_cycle();
+            } else if c.name == "双衍王境" {
+                *c = parse_duviri_cycle();
+            } else if let Some(rolled) = api::roll_forward_cycle(c, now) {
+                *c = rolled;
+            } else {
+                c.remain_ms = 0;
+                c.remain_str = "切换中".to_string();
+            }
+        } else {
+            c.remain_ms = remain;
+            c.remain_str = fmt_remain(remain);
+        }
+    }
+    if let Some(b) = &mut p.baro {
+        if !b.active && now >= b.start_ms {
+            b.active = true;
+        }
+        let target = if b.active { b.end_ms } else { b.start_ms };
+        b.remain_ms = target - now;
+        b.remain_str = fmt_remain_baro(b.remain_ms);
+    }
+    for b in &mut p.bounties {
+        b.remain_ms = b.expiry_ms - now;
+        b.remain_str = fmt_remain(b.remain_ms);
+    }
+    if let Some(c) = &mut p.circuit {
+        c.remain_ms = c.expiry_ms - now;
+        c.remain_str = fmt_remain_days(c.remain_ms);
+    }
+    p.arbitration = if initialized { parse_arbitration(now) } else { None };
+    p.mission_timer = timer_payload.clone();
+    p.countdown_secs = countdown_secs;
+    p.last_update = last_update.to_string();
+}
+
 type SharedConfig = Arc<StdRwLock<AppConfig>>;
 type MissionTimerShared = Arc<StdRwLock<MissionTimerState>>;
 
@@ -487,14 +556,15 @@ async fn fetch_store_emit(
                 s.circuit = circuit;
                 s.last_update = now_str;
                 s.countdown_secs = REFRESH_SEC;
+                s.last_fetch_wall_ms = now_ms(); // wall-clock anchor for tick-loop countdown derivation
                 s.initialized = true; // data is ready — allow local computation (arbitration) to join
-            }
-            let payload = {
-                let s = state.read().await;
+                // Build a fresh payload while we hold the write lock, cache it in
+                // state so the per-second tick can refresh it in-place without
+                // cloning every fissure/cycle/bounty vec all over again.
                 let t = timer.read().unwrap();
-                build_payload(&s, &t)
-            };
-            let _ = handle.emit("worldstate-update", payload);
+                s.cached_payload = build_payload(&s, &t);
+                let _ = handle.emit("worldstate-update", &s.cached_payload);
+            }
             Ok(())
         }
         Err(e) => {
@@ -507,8 +577,19 @@ async fn fetch_store_emit(
 }
 
 #[tauri::command]
-async fn refresh_now(state: tauri::State<'_, SharedState>, timer_state: tauri::State<'_, MissionTimerShared>, app: tauri::AppHandle, config: tauri::State<'_, SharedConfig>) -> Result<(), String> {
-    fetch_store_emit(&state, &timer_state, &app, &config).await
+async fn refresh_now(
+    state: tauri::State<'_, SharedState>,
+    timer_state: tauri::State<'_, MissionTimerShared>,
+    app: tauri::AppHandle,
+    config: tauri::State<'_, SharedConfig>,
+    refreshing: tauri::State<'_, Arc<RefreshGuard>>,
+) -> Result<(), String> {
+    if refreshing.0.compare_exchange(false, true, std::sync::atomic::Ordering::AcqRel, std::sync::atomic::Ordering::Relaxed).is_err() {
+        return Err("正在刷新中，请稍后再试".into());
+    }
+    let result = fetch_store_emit(&state, &timer_state, &app, &config).await;
+    refreshing.0.store(false, std::sync::atomic::Ordering::Release);
+    result
 }
 
 #[tauri::command]
@@ -918,6 +999,8 @@ pub fn run() {
     let notify_list: NotifyList = Arc::new(StdRwLock::new(Vec::new()));
     let flashing: FlashFlag = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let hide_gen: HideGen = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    // Guards against concurrent manual refresh requests (button spam / tray spam).
+    let refreshing: Arc<RefreshGuard> = Arc::new(RefreshGuard(Arc::new(std::sync::atomic::AtomicBool::new(false))));
 
     tauri::Builder::default()
         .manage(state.clone())
@@ -927,6 +1010,7 @@ pub fn run() {
         .manage(notify_list.clone())
         .manage(flashing.clone())
         .manage(hide_gen.clone())
+        .manage(refreshing.clone())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -972,7 +1056,15 @@ pub fn run() {
             let log_handle = app.handle().clone();
             std::thread::spawn(move || {
                 while let Ok(msg) = log_rx.recv() {
-                    let _ = log_handle.emit("timer-log", msg);
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let _ = log_handle.emit("timer-log", msg);
+                    }));
+                    if result.is_err() {
+                        let _ = log_handle.emit(
+                            "timer-log",
+                            format!("[{}] ⚠ 日志转发异常已恢复", chrono::Local::now().format("%H:%M:%S")),
+                        );
+                    }
                 }
             });
 
@@ -981,15 +1073,17 @@ pub fn run() {
             let alert_bark = bark_cfg.clone();
             std::thread::spawn(move || {
                 while let Ok(msg) = alert_rx.recv() {
-                    show_toast(&alert_handle, &msg.title, &msg.body);
-                    let u = alert_bark.read().unwrap().notify_bark_url.clone();
-                    if !u.is_empty() {
-                        let title = msg.title.clone();
-                        let body = msg.body.clone();
-                        tauri::async_runtime::spawn(async move {
-                            phone_push::push(&u, &title, &body).await;
-                        });
-                    }
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        show_toast(&alert_handle, &msg.title, &msg.body);
+                        let u = alert_bark.read().unwrap().notify_bark_url.clone();
+                        if !u.is_empty() {
+                            let title = msg.title.clone();
+                            let body = msg.body.clone();
+                            tauri::async_runtime::spawn(async move {
+                                phone_push::push(&u, &title, &body).await;
+                            });
+                        }
+                    }));
                 }
             });
 
@@ -1001,9 +1095,10 @@ pub fn run() {
             let sub_bark = bark_cfg.clone();
             std::thread::spawn(move || {
                 while let Ok(msg) = notify_rx.recv() {
-                    let snapshot = {
-                        let mut list = notify_store.write().unwrap();
-                        list.insert(0, msg.clone());
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let snapshot = {
+                            let mut list = notify_store.write().unwrap();
+                            list.insert(0, msg.clone());
                         if list.len() > 50 { list.truncate(50); }
                         list.clone()
                     };
@@ -1017,6 +1112,7 @@ pub fn run() {
                             phone_push::push(&u, &title, &body).await;
                         });
                     }
+                    }));
                 }
             });
 
@@ -1032,30 +1128,38 @@ pub fn run() {
                 let mut was_active = false;
                 loop {
                     std::thread::sleep(Duration::from_millis(500));
-                    let active = flash_flag.load(std::sync::atomic::Ordering::Relaxed);
-                    if active {
-                        was_active = true;
-                        let icon = flash_frames[idx % flash_frames.len()].clone();
-                        idx = idx.wrapping_add(1);
-                        let h = flash_handle.clone();
-                        let _ = flash_handle.run_on_main_thread(move || {
-                            if let Some(tray) = h.tray_by_id("main") {
-                                let _ = tray.set_icon(Some(icon));
-                            }
-                        });
-                    } else if was_active {
-                        was_active = false;
-                        idx = 0;
-                        let icon = flash_normal.clone();
-                        let h = flash_handle.clone();
-                        let _ = flash_handle.run_on_main_thread(move || {
-                            if let Some(tray) = h.tray_by_id("main") {
-                                let _ = tray.set_icon(Some(icon));
-                            }
-                        });
-                    }
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let active = flash_flag.load(std::sync::atomic::Ordering::Relaxed);
+                        if active {
+                            was_active = true;
+                            let icon = flash_frames[idx % flash_frames.len()].clone();
+                            idx = idx.wrapping_add(1);
+                            let h = flash_handle.clone();
+                            let _ = flash_handle.run_on_main_thread(move || {
+                                if let Some(tray) = h.tray_by_id("main") {
+                                    let _ = tray.set_icon(Some(icon));
+                                }
+                            });
+                        } else if was_active {
+                            was_active = false;
+                            idx = 0;
+                            let icon = flash_normal.clone();
+                            let h = flash_handle.clone();
+                            let _ = flash_handle.run_on_main_thread(move || {
+                                if let Some(tray) = h.tray_by_id("main") {
+                                    let _ = tray.set_icon(Some(icon));
+                                }
+                            });
+                        }
+                    }));
                 }
             });
+
+            // Shared cycle-state history for check_cycle_alerts — both the
+            // fetch loop and the tick loop (gap recovery) write to it so a
+            // sleep→wake doesn't leave prev states stuck in the past.
+            let prev_cycle_states: PrevCycleStates =
+                Arc::new(StdRwLock::new(std::collections::HashMap::new()));
 
             // Background fetch loop (every REFRESH_SEC)
             let fetch_state = state.clone();
@@ -1063,9 +1167,9 @@ pub fn run() {
             let fetch_handle = app.handle().clone();
             let fetch_config = config.clone();
             let fetch_notify_tx = notify_tx.clone();
+            let fetch_prev_cycle_states = prev_cycle_states.clone();
             tauri::async_runtime::spawn(async move {
                 let mut notified_fissures: std::collections::HashSet<String> = std::collections::HashSet::new();
-                let mut prev_cycle_states: std::collections::HashMap<String, String> = std::collections::HashMap::new();
                 let mut prev_arb_key = String::new();
                 // `interval`'s first tick fires immediately → fetch once at
                 // startup, then every REFRESH_SEC.
@@ -1085,7 +1189,7 @@ pub fn run() {
                             (all, s.cycles.clone(), cfg.fissure_alerts.clone(), cfg.cycle_alerts.clone(), cfg.arbitration_alerts.clone())
                         };
                         check_fissure_alerts(&all_fissures, &fissure_alerts, &mut notified_fissures, &fetch_notify_tx);
-                        check_cycle_alerts(&cycles, &cycle_alerts, &mut prev_cycle_states, &fetch_notify_tx);
+                        check_cycle_alerts(&cycles, &cycle_alerts, &mut *fetch_prev_cycle_states.write().unwrap(), &fetch_notify_tx);
                         let arb = parse_arbitration(now);
                         check_arbitration_alerts(arb.as_ref(), &arb_alerts, &mut prev_arb_key, &fetch_notify_tx);
                     }
@@ -1098,34 +1202,99 @@ pub fn run() {
             let tick_handle = app.handle().clone();
             let tick_notify_tx = notify_tx.clone();
             let tick_config = config.clone();
+            let tick_prev_cycle_states = prev_cycle_states.clone();
             let tick_advance_fired: Arc<StdRwLock<std::collections::HashSet<String>>> =
                 Arc::new(StdRwLock::new(std::collections::HashSet::new()));
             tauri::async_runtime::spawn(async move {
+                let mut last_wall = std::time::SystemTime::now();
                 let mut tick = tokio::time::interval(Duration::from_secs(1));
                 loop {
                     tick.tick().await;
-                    let (payload, cycle_alerts) = {
+
+                    let now = now_ms();
+                    // Wall-clock gap detection — catches tick loss from sleep,
+                    // CPU starvation, or any other cause.
+                    let elapsed_wall = std::time::SystemTime::now()
+                        .duration_since(last_wall)
+                        .unwrap_or_default();
+                    let need_cycle_check = elapsed_wall > Duration::from_secs(2);
+
+                    // ── Async lock acquisition + synchronous state update ──
+                    {
                         let mut s = tick_state.write().await;
-                        s.countdown_secs = s.countdown_secs.saturating_sub(1);
+                        // ── Countdown from wall clock (not an accumulator) ──
+                        let diff_ms = now - s.last_fetch_wall_ms;
+                        let elapsed_s = if diff_ms > 0 {
+                            (diff_ms / 1000) as u32
+                        } else {
+                            0 // NTP backward jump — stay conservative
+                        };
+                        s.countdown_secs = REFRESH_SEC.saturating_sub(elapsed_s);
                         {
                             let mut t = tick_timer.write().unwrap();
                             t.update_elapsed();
                         }
                         let t = tick_timer.read().unwrap();
-                        let alerts = tick_config.read().unwrap().cycle_alerts.clone();
-                        (build_payload(&s, &t), alerts)
-                    };
-                    let _ = tick_handle.emit("tick-update", &payload);
-                    // Check advance-notice thresholds (夜灵平野 only for now).
-                    if !cycle_alerts.is_empty() {
-                        let mut fired = tick_advance_fired.write().unwrap();
-                        check_cycle_advance_alerts(
-                            &payload.cycles,
-                            &cycle_alerts,
-                            &mut fired,
-                            &tick_notify_tx,
+                        let countdown = s.countdown_secs;
+                        let last_update = s.last_update.clone();
+                        let initialized = s.initialized;
+                        refresh_cached_payload(
+                            &mut s.cached_payload,
+                            now,
+                            &t.payload,
+                            countdown,
+                            &last_update,
+                            initialized,
                         );
                     }
+
+                    // ── Read-only emit + alert checks (purely synchronous) ──
+                    let s = tick_state.read().await;
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let _ = tick_handle.emit("tick-update", &s.cached_payload);
+
+                        let cycle_alerts = tick_config.read().unwrap().cycle_alerts.clone();
+                        if !cycle_alerts.is_empty() {
+                            let mut fired = tick_advance_fired.write().unwrap();
+                            check_cycle_advance_alerts(
+                                &s.cached_payload.cycles,
+                                &cycle_alerts,
+                                &mut fired,
+                                &tick_notify_tx,
+                            );
+                        }
+
+                        // After a large gap (sleep / long pause), also run the
+                        // state-transition check so we don't wait for the next
+                        // fetch to notice a phase change.  Always sync the
+                        // baseline so the next fetch doesn't compare against a
+                        // stale prev.
+                        if need_cycle_check {
+                            let alerts = tick_config.read().unwrap().cycle_alerts.clone();
+                            if !alerts.is_empty() {
+                                let mut prev = tick_prev_cycle_states.write().unwrap();
+                                check_cycle_alerts(
+                                    &s.cached_payload.cycles,
+                                    &alerts,
+                                    &mut prev,
+                                    &tick_notify_tx,
+                                );
+                            }
+                        }
+                    }));
+                    if result.is_err() {
+                        let _ = tick_handle.emit(
+                            "timer-log",
+                            format!(
+                                "[{}] ⚠ 时钟循环异常已恢复",
+                                chrono::Local::now().format("%H:%M:%S")
+                            ),
+                        );
+                    }
+
+                    // Always advance the wall-clock anchor — even if the tick
+                    // body panicked, so the next iteration sees the real gap.
+                    last_wall = std::time::SystemTime::now();
                 }
             });
 
@@ -1160,6 +1329,7 @@ pub fn run() {
             let tray_state = state.clone();
             let tray_timer = timer_state.clone();
             let tray_config = config.clone();
+            let tray_refreshing = refreshing.clone();
             let menu_flash = flashing.clone();
             let tray_flash = flashing.clone();
             let tray_notify = notify_list.clone();
@@ -1178,12 +1348,17 @@ pub fn run() {
                         }
                     }
                     "refresh" => {
+                        if tray_refreshing.0.compare_exchange(false, true, std::sync::atomic::Ordering::AcqRel, std::sync::atomic::Ordering::Relaxed).is_err() {
+                            return; // already refreshing — ignore duplicate
+                        }
+                        let flag = tray_refreshing.clone();
                         let state = tray_state.clone();
                         let timer = tray_timer.clone();
                         let handle = app.clone();
                         let cfg = tray_config.clone();
                         tauri::async_runtime::spawn(async move {
                             let _ = fetch_store_emit(&state, &timer, &handle, &cfg).await;
+                            flag.0.store(false, std::sync::atomic::Ordering::Release);
                         });
                     }
                     "quit" => app.exit(0),

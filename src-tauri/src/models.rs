@@ -166,7 +166,7 @@ pub struct ArbitrationInfo {
     pub all_planets: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppStatePayload {
     pub normal_fissures: Vec<Fissure>,
     pub hard_fissures: Vec<Fissure>,

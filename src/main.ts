@@ -67,6 +67,7 @@ interface CycleInfo {
   state_icon: string;
   remain_ms: number;
   is_day: boolean;
+  remain_str: string;
 }
 
 interface MissionTimerPayload {
@@ -227,7 +228,7 @@ function renderCycles(cycles: CycleInfo[]) {
     const isOpen = isCircuit ? openCircuit : openBounty === c.name;
     const tag = isCircuit ? '回廊' : '赏金';
     return `
-    <div class="cycle-card ${c.is_day ? 'day' : 'night'}${clickable ? ' clickable' : ''}${isOpen ? ' open' : ''}"${clickable ? ` data-cycle="${c.name}"` : ''}>
+    <div class="cycle-card ${c.is_day ? 'day' : 'night'}${clickable ? ' clickable' : ''}${isOpen ? ' open' : ''}" data-cycle="${c.name}">
       <div class="card-name">${c.name}${clickable ? ` <span class="bounty-tag">${tag}</span>` : ''}</div>
       <div class="card-state">${c.state}</div>
       <div class="card-time">剩余 ${fmtRemain(c.remain_ms)}</div>
@@ -575,12 +576,12 @@ function renderFissures() {
     const sub = fissureSubscribed(f);
     const cls = `${f.is_expiring ? 'expiring' : ''}${sub ? ' subscribed' : ''}`.trim();
     return `
-    <tr class="${cls}" data-node="${f.node_name}" style="background:${TIER_BG[f.tier_key] || '#252525'};color:${TIER_FG};">
+    <tr class="${cls}" data-node="${f.node_name}" data-node-key="${f.node_key}" style="background:${TIER_BG[f.tier_key] || '#252525'};color:${TIER_FG};">
       <td>${sub ? '<span class="sub-bell">🔔</span>' : ''}<img src="/relics/${f.tier_key}.png" class="relic-icon" alt=""> ${f.tier_label}</td>
       <td>${f.node_name}</td>
       <td>${f.planet}</td>
       <td>${f.mission_type}</td>
-      <td>${f.remain_str}</td>
+      <td class="fissure-remain">${f.remain_str}</td>
     </tr>`;
   }).join('');
 
@@ -688,6 +689,65 @@ function handleUpdate(payload: AppStatePayload) {
     _lastAlertSig = sig;
     _refreshAlertsCb?.();
   }
+}
+
+// ── Per-second tick handler: update only text nodes that carry live
+//     countdowns (cycle cards, fissure remain cells, bounty/circuit
+//     headers). Never rebuilds innerHTML — that only happens on
+//     worldstate-update via handleUpdate.
+function handleTickUpdate(payload: AppStatePayload) {
+  currentData = payload;
+
+  // Cycle cards — patch .card-time text by data-cycle name.
+  document.querySelectorAll<HTMLElement>('.cycle-card').forEach(card => {
+    const name = card.dataset.cycle;
+    if (!name) return;
+    const cycle = payload.cycles.find(c => c.name === name);
+    if (cycle) {
+      const el = card.querySelector('.card-time');
+      if (el) el.textContent = `剩余 ${cycle.remain_str}`;
+    }
+  });
+
+  // Fissure table — patch .fissure-remain cells, toggle .expiring class.
+  const allFissures = new Map(
+    [...payload.normal_fissures, ...payload.hard_fissures, ...payload.storm_fissures]
+      .map(f => [f.node_key, f])
+  );
+  document.querySelectorAll<HTMLElement>('#fissure-table tbody tr').forEach(row => {
+    const key = row.dataset.nodeKey;
+    if (!key) return;
+    const f = allFissures.get(key);
+    if (f) {
+      const cell = row.querySelector('.fissure-remain');
+      if (cell) cell.textContent = f.remain_str;
+      row.classList.toggle('expiring', f.is_expiring);
+    }
+  });
+
+  // Bounty panel countdown headers (if a board is open).
+  if (openBounty) {
+    const visible = payload.bounties.filter(x => x.card === openBounty);
+    document.querySelectorAll<HTMLElement>('.bounty-section .bch-count').forEach((el, i) => {
+      if (i < visible.length) el.textContent = visible[i].remain_str;
+    });
+  }
+
+  // Circuit panel countdown header (if open).
+  if (openCircuit && payload.circuit) {
+    const cd = document.querySelector<HTMLElement>('.circuit-head .bch-count');
+    if (cd) cd.textContent = `${payload.circuit.remain_str}后刷新`;
+  }
+
+  // Baro / Arbitration / Timer — these already have fast paths that only
+  // touch textContent when the structural signature hasn't changed.
+  renderBaro(payload.baro);
+  renderArbitration(payload.arbitration);
+  renderTimer(payload.mission_timer);
+
+  // "更新于" watermark.
+  const updatedEl = document.getElementById('cycles-updated');
+  if (updatedEl) updatedEl.textContent = `更新于 ${payload.last_update}`;
 }
 
 // ── Event listeners ──
@@ -1114,7 +1174,7 @@ window.addEventListener('DOMContentLoaded', () => {
   });
 
   listen<AppStatePayload>('tick-update', (event) => {
-    handleUpdate(event.payload);
+    handleTickUpdate(event.payload);
   });
 
   // Click-through from a tray-popup notification → jump to the matching entry.

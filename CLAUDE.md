@@ -193,3 +193,7 @@ Missing config fields use serde defaults. `load_config` calls `migrate_old_defau
 ### I18N
 
 All user-facing strings are Chinese (zh-CN). The UI is Chinese-only. The Warframe API returns English keys which are translated via lookup tables in `api.rs` (mission types, tier names, node names, bounty titles). **Item names** (Baro manifest, bounty rewards) are localized differently — via the data-driven, updatable `item_i18n` map rather than hardcoded tables (see Item-Name Localization).
+
+### API Dependency Snapshot
+
+`API_SNAPSHOT.md` records every JSON path, field type, enum value, and fallback the code depends on from DE's worldstate API. **Before each commit, verify the API hasn't changed** — if it has, update the snapshot. This is the single source of truth for what the code expects from `api.warframe.com/cdn/worldState.php`.
