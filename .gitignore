@@ -41,7 +41,7 @@ pic/
 warframe-bilingual_*.json
 *.png
 
-# Planning/dev docs
+# Planning/dev docs — 非源码文档一律不上传
 *_findings.md
 *_progress.md
 *_task_plan.md
@@ -49,8 +49,24 @@ warframe-bilingual_*.json
 code-review.md
 findings.md
 progress.md
+task_plan.md
 docs/
 AGENTS.md
+CLAUDE.md
+API_SNAPSHOT.md
+CHANGELOG.md
+CODE_AUDIT.md
+CODE_NOTES.md
+HANDOVER.md
+README.md
 
-# CI-generated release notes artifact
+# CI-generated artifacts (CI 自己生成，不需要提交)
+latest.json
 release_notes.txt
+
+# Claude Code
+.claude/
+.superpowers/
+
+# Temp files
+*.tmp
