@@ -28,6 +28,24 @@ Without it, `cargo build` fails with `dlltool: program not found`. Debug builds 
 
 There are no lint or test commands configured. The Rust side has no `#[test]` targets. The frontend uses `tsc` in the build pipeline but has no unit tests.
 
+## Release Process
+
+Publishing a release is fully automated via `.github/workflows/release.yml`. Trigger: push a `v*` tag.
+
+**Steps for the human (xuziyu):**
+1. Bump version in `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json` to the same value.
+2. Commit with the version number as the message (e.g. `v1.2.0`).
+3. `git tag v1.2.0`
+4. `git push origin master` + `git push origin v1.2.0`
+
+**CI does the rest** (on every `v*` tag push):
+- `npx tauri build` → signs the installer → creates GitHub Release with installer + latest.json
+- Mirrors code + latest.json + tag + release to Gitee (`Swing_Rainbow/vox-alic`)
+
+**Do NOT** manually upload installers to GitHub Releases or Gitee — CI owns this end-to-end.
+
+**Installer cache**: `nsis/` folder holds local copies of built installers for distribution (not managed by CI).
+
 ## Architecture Overview
 
 **Tauri v2 desktop app** — Warframe worldstate monitor with OCR-based in-mission timer.
