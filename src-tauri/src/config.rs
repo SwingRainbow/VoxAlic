@@ -222,10 +222,17 @@ pub struct AppConfig {
     /// Update check source: "gitee" (fast in China) or "github".
     #[serde(default = "default_update_source")]
     pub update_source: String,
+    /// Market display language: "en" or "zh".
+    #[serde(default = "default_market_language")]
+    pub market_language: String,
 }
 
 fn default_update_source() -> String {
     "gitee".into()
+}
+
+fn default_market_language() -> String {
+    "en".into()
 }
 
 fn default_close_to_tray() -> bool {
@@ -246,6 +253,7 @@ impl Default for AppConfig {
             arbitration_alerts: Vec::new(),
             notify_bark_url: String::new(),
             update_source: default_update_source(),
+            market_language: default_market_language(),
         }
     }
 }

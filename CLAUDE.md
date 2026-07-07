@@ -4,6 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 > **Note:** `AGENTS.md` is a mirror of this file (for Codex.ai). Keep both in sync when making changes.
 
+## File Safety Rules (硬规则)
+
+1. **禁止删除任何非构建产物的文件**。`nsis/`、`release/`、安装包（`.exe`/`.msi`）、业务文件、文档，没有 xuziyu 的明确指令绝不删除或移动。
+2. **删前确认**：涉及任何文件删除操作之前，先列出要删的文件清单，等 xuziyu 确认再动手。
+3. 允许不经确认删除的只有构建临时产物：`target/`、`node_modules/`、`dist/`。
+
 ## Build / Run / Development
 
 ```bash

@@ -11,6 +11,7 @@
     <button class="tab-btn active" data-tab="cycles">世界时间</button>
     <button class="tab-btn" data-tab="fissures">虚空裂缝</button>
     <button class="tab-btn" data-tab="timer">任务计时</button>
+    <button class="tab-btn" data-tab="market">Warframe Market</button>
     <button class="tab-btn" data-tab="settings">设置</button>
   </div>
 
@@ -45,6 +46,23 @@
         <tbody></tbody>
       </table>
     </div>
+  </div>
+
+  <div id="tab-market" class="tab-content">
+    <div class="market-search-area" id="market-search-area">
+      <div class="market-search-bar">
+        <div class="market-search-input-wrap">
+          <input type="text" id="market-search" class="market-search-input" placeholder="搜索物品名称…" autocomplete="off" />
+          <span class="market-status-inline" id="market-status-inline"></span>
+        </div>
+        <div class="translate-wrap" id="translate-wrap">
+          <input type="text" id="translate-zh" class="translate-input" placeholder="中→英…" autocomplete="off" />
+          <div class="translate-results hidden" id="translate-results"></div>
+        </div>
+      </div>
+      <div id="market-results" class="market-results"></div>
+    </div>
+    <div id="market-detail" class="market-detail hidden"></div>
   </div>
 
   <div id="tab-settings" class="tab-content">
@@ -88,6 +106,18 @@
         <div class="settings-label">物品库</div>
         <div class="alert-method-row">
           <span class="calib-result" id="itemnames-status">--</span>
+        </div>
+      </div>
+
+      <div class="settings-item">
+        <div class="settings-label">Warframe Market</div>
+        <div class="alert-method-row">
+          <label>语言：</label>
+          <label class="radio-inline"><input type="radio" name="market-language" value="en" checked> English</label>
+          <label class="radio-inline"><input type="radio" name="market-language" value="zh"> 中文</label>
+          <span class="settings-sep">|</span>
+          <button class="timer-btn-sm" id="btn-market-refresh">刷新物品库</button>
+          <span class="calib-result" id="market-status-settings"></span>
         </div>
       </div>
 

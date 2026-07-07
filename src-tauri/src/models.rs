@@ -184,3 +184,52 @@ pub struct AppStatePayload {
     #[serde(default)]
     pub arbitration: Option<ArbitrationInfo>,
 }
+
+// ── Warframe.Market ─────────────────────────────────────────────────────────
+
+/// Search result row sent to the frontend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketItemSummary {
+    pub slug: String,
+    pub name: String,       // en
+    #[serde(default)]
+    pub name_zh: String,    // zh-hans (for translation display)
+    pub icon_url: String,   // resolved full URL
+    pub mr: Option<u8>,     // None = unknown
+    #[serde(default)]
+    pub max_rank: Option<u8>, // max mod/arcane rank
+    pub tags: Vec<String>,
+}
+
+/// One buy or sell order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketOrder {
+    pub order_type: String,  // "sell" | "buy"
+    pub platinum: u32,
+    pub quantity: u32,
+    pub player_name: String,
+    pub reputation: i32,
+    pub status: String,      // "ingame" | "online" | "offline"
+    #[serde(default)]
+    pub mod_rank: Option<u8>, // rank of this mod/arcane listing
+}
+
+/// Detail panel payload (item info + orders).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketItemFull {
+    pub item: MarketItemSummary,
+    pub ducats: Option<u32>,
+    pub trading_tax: Option<u32>,
+    pub set_root: bool,
+    #[serde(default)]
+    pub set_parts: Vec<MarketItemSummary>,
+    pub sell_orders: Vec<MarketOrder>,
+    pub buy_orders: Vec<MarketOrder>,
+}
+
+/// Cache status sent to the frontend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketCacheStatus {
+    pub count: usize,
+    pub last_updated: String,
+}

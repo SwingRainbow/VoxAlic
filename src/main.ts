@@ -24,6 +24,7 @@ interface AppConfig {
   worldstate_source: string;
   notify_bark_url: string;
   update_source: string;
+  market_language: string;
   fissure_alerts: FissureAlert[];
   cycle_alerts: CycleAlert[];
   arbitration_alerts: ArbitrationAlert[];
@@ -174,6 +175,39 @@ interface AppStatePayload {
   arbitration: ArbitrationInfo | null;
 }
 
+// ── Warframe.Market types ──
+interface MarketItemSummary {
+  slug: string;
+  name: string;
+  name_zh?: string;
+  icon_url: string;
+  mr: number | null;
+  max_rank?: number | null;
+  tags: string[];
+}
+interface MarketOrder {
+  order_type: string;
+  platinum: number;
+  quantity: number;
+  player_name: string;
+  reputation: number;
+  status: string;
+  mod_rank?: number | null;
+}
+interface MarketItemFull {
+  item: MarketItemSummary;
+  ducats: number | null;
+  trading_tax: number | null;
+  set_root: boolean;
+  set_parts: MarketItemSummary[];
+  sell_orders: MarketOrder[];
+  buy_orders: MarketOrder[];
+}
+interface MarketCacheStatus {
+  count: number;
+  last_updated: string;
+}
+
 // ── Tier colors (match Python original) ──
 const TIER_BG: Record<string, string> = {
   VoidT1: '#564b43', VoidT2: '#3e4140', VoidT3: '#383839',
@@ -216,6 +250,20 @@ let openBaro = false;
 let openArbitration = false;
 // The Duviri cycle card opens the Circuit panel instead of a bounty board.
 const CIRCUIT_CYCLE = '双衍王境';
+
+// ── Market state ──
+let marketOpenSlug: string | null = null;  // currently expanded item slug
+let marketReqId = 0;                       // race-condition guard
+let marketSearchTimer: ReturnType<typeof setTimeout> | null = null;
+let marketLang: string = 'en';             // 'en' | 'zh'
+let _lastMarketDetail: MarketItemFull | null = null;  // cached for language-switch re-render
+let _lastMarketResults: MarketItemSummary[] = [];     // last search results (for hot-switch)
+
+/** Return the display name for an item based on current market language. */
+function marketName(item: { name: string; name_zh?: string }): string {
+  if (marketLang === 'zh' && item.name_zh) return item.name_zh;
+  return item.name;
+}
 
 // ── Render functions ──
 function renderCycles(cycles: CycleInfo[]) {
@@ -663,6 +711,330 @@ function renderArbitration(arb: ArbitrationInfo | null) {
     </div>`;
 }
 
+// ── Warframe.Market render functions ──────────────────────────────────────
+
+function statusLabel(s: string): string {
+  switch (s) {
+    case 'ingame': return '<span class="status-text ingame">游戏中</span>';
+    case 'online': return '<span class="status-text online">在线</span>';
+    default: return '<span class="status-text offline">离线</span>';
+  }
+}
+
+function repClass(rep: number): string {
+  if (rep >= 20) return 'rep-high';
+  if (rep >= 10) return 'rep-mid';
+  if (rep >= 0) return 'rep-low';
+  return 'rep-neg';
+}
+
+function copyWhisper(playerName: string, itemName: string, platinum: number, orderType: string): void {
+  const verb = orderType === 'sell' ? 'buy' : 'sell';
+  const msg = `/w ${playerName} Hi! I want to ${verb}: "${itemName}" for ${platinum} platinum. (warframe.market)`;
+  navigator.clipboard.writeText(msg).then(() => {
+    // brief visual feedback
+  }).catch(() => {
+    // fallback: select the text so user can Ctrl+C
+    const ta = document.createElement('textarea');
+    ta.value = msg;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  });
+}
+
+function renderMarketResults(items: MarketItemSummary[]) {
+  _lastMarketResults = items;
+  const container = document.getElementById('market-results')!;
+  if (!items.length) {
+    container.innerHTML = '<div class="market-empty">未找到物品</div>';
+    return;
+  }
+  container.innerHTML = items.map(item => {
+    const activeCls = marketOpenSlug === item.slug ? ' active' : '';
+    return `
+    <div class="market-result-row${activeCls}" data-slug="${item.slug}">
+      <span class="market-result-name">${marketName(item)}</span>
+    </div>`;
+  }).join('');
+}
+
+// ── Lazy order rendering ──
+const ORDER_BATCH = 20;
+type SortKey = 'price' | 'status';
+interface SortState { key: SortKey; dir: 'asc' | 'desc'; }
+let _lazyItemName = '';
+let _lazyMaxRank: number | null | undefined = null;
+let _lazySellOrders: MarketOrder[] = [];
+let _lazyBuyOrders: MarketOrder[] = [];
+let _lazySellCount = 0;
+let _lazyBuyCount = 0;
+let _lazySellSort: SortState = { key: 'price', dir: 'asc' };
+let _lazyBuySort: SortState = { key: 'price', dir: 'desc' };
+let _lazyObservers: IntersectionObserver[] = [];
+
+function orderRowHTML(o: MarketOrder): string {
+  const rankCol = _lazyMaxRank ? `<td class="rank-cell">${o.mod_rank != null ? `${o.mod_rank} of ${_lazyMaxRank}` : '--'}</td>` : '';
+  return `<tr>
+    <td class="player" title="${o.player_name}">${o.player_name}</td>
+    <td class="status-cell">${statusLabel(o.status)}</td>
+    <td class="rep-cell"><span class="rep-badge ${repClass(o.reputation)}">${o.reputation >= 0 ? '+' : ''}${o.reputation}</span></td>${rankCol}
+    <td class="price">${o.platinum}p</td>
+    <td class="qty-cell">${o.quantity > 1 ? `<span class="qty-badge">×${o.quantity}</span>` : '<span class="qty-one">×1</span>'}</td>
+    <td class="whisper-cell"><button class="btn-whisper" onclick="var b=this;b.textContent='✓';setTimeout(function(){b.textContent='📋'},800);window._copyWhisper('${o.player_name}', '${_lazyItemName.replace(/'/g, "\\'")}', ${o.platinum}, '${o.order_type}')" title="复制私信">📋</button></td>
+  </tr>`;
+}
+
+function applySort(orders: MarketOrder[], sort: SortState): MarketOrder[] {
+  const sorted = [...orders];
+  if (sort.key === 'price') {
+    sorted.sort((a, b) => sort.dir === 'asc' ? a.platinum - b.platinum : b.platinum - a.platinum);
+  } else {
+    const rank: Record<string, number> = { ingame: 0, online: 1, offline: 2 };
+    sorted.sort((a, b) => {
+      const ra = rank[a.status] ?? 3;
+      const rb = rank[b.status] ?? 3;
+      if (ra !== rb) return sort.dir === 'asc' ? ra - rb : rb - ra;
+      return a.platinum - b.platinum;
+    });
+  }
+  return sorted;
+}
+
+function reloadOrderSide(side: 'sell' | 'buy') {
+  // Disconnect existing observers for this side
+  _lazyObservers.forEach(o => o.disconnect());
+  _lazyObservers = [];
+
+  const orders = side === 'sell' ? _lazySellOrders : _lazyBuyOrders;
+  const sort = side === 'sell' ? _lazySellSort : _lazyBuySort;
+  const tbodyId = side === 'sell' ? 'sell-tbody' : 'buy-tbody';
+
+  const sorted = applySort(orders, sort);
+  if (side === 'sell') { _lazySellOrders = sorted; _lazySellCount = 0; }
+  else { _lazyBuyOrders = sorted; _lazyBuyCount = 0; }
+
+  const tbody = document.getElementById(tbodyId);
+  if (tbody) tbody.innerHTML = '';
+
+  loadMoreOrders(side);
+}
+
+function sortCtrlHTML(side: 'sell' | 'buy', key: SortKey, label: string): string {
+  const sort = side === 'sell' ? _lazySellSort : _lazyBuySort;
+  const active = sort.key === key;
+  const arrow = active ? (sort.dir === 'asc' ? ' ↑' : ' ↓') : '';
+  return `<span class="sort-ctrl${active ? ' active' : ''}" onclick="window._sortMarket('${side}','${key}')">${label}${arrow}</span>`;
+}
+
+function loadMoreOrders(side: 'sell' | 'buy') {
+  const orders = side === 'sell' ? _lazySellOrders : _lazyBuyOrders;
+  const rendered = side === 'sell' ? _lazySellCount : _lazyBuyCount;
+  const tbodyId = side === 'sell' ? 'sell-tbody' : 'buy-tbody';
+  const sentinelId = side === 'sell' ? 'sell-sentinel' : 'buy-sentinel';
+
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody || rendered >= orders.length) return;
+
+  const batch = orders.slice(rendered, rendered + ORDER_BATCH);
+  const oldSentinel = document.getElementById(sentinelId);
+  if (oldSentinel) oldSentinel.remove();
+
+  tbody.insertAdjacentHTML('beforeend', batch.map(orderRowHTML).join(''));
+
+  if (side === 'sell') _lazySellCount += batch.length;
+  else _lazyBuyCount += batch.length;
+
+  const newRendered = side === 'sell' ? _lazySellCount : _lazyBuyCount;
+  if (newRendered < orders.length) {
+    const sentinel = document.createElement('tr');
+    sentinel.id = sentinelId;
+    sentinel.innerHTML = `<td colspan="${_lazyMaxRank ? 7 : 6}" style="padding:0;height:1px"></td>`;
+    tbody.appendChild(sentinel);
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) {
+        observer.disconnect();
+        loadMoreOrders(side);
+      }
+    }, { rootMargin: '300px' });
+    observer.observe(sentinel);
+    _lazyObservers.push(observer);
+  }
+}
+
+function renderMarketDetail(data: MarketItemFull) {
+  _lazyObservers.forEach(o => o.disconnect());
+  _lazyObservers = [];
+  _lastMarketDetail = data;  // cache for language-switch re-render without re-fetch
+
+  const container = document.getElementById('market-detail')!;
+  container.classList.remove('hidden');
+  const item = data.item;
+  const mrText = (item.mr != null && item.mr > 0) ? `MR ${item.mr}` : 'MR --';
+  const taxText = data.trading_tax != null ? `交易税 ${data.trading_tax.toLocaleString()}` : '';
+  const ducatsText = data.ducats != null ? `杜卡德 ${data.ducats}` : '';
+
+  _lazyItemName = item.name;
+  _lazyMaxRank = item.max_rank;
+  _lazySellOrders = data.sell_orders;
+  _lazyBuyOrders = data.buy_orders;
+  _lazySellCount = 0;
+  _lazyBuyCount = 0;
+  _lazySellSort = { key: 'price', dir: 'asc' };
+  _lazyBuySort = { key: 'price', dir: 'desc' };
+
+  const makeOrderSide = (side: 'sell' | 'buy', orders: MarketOrder[], title: string): string => {
+    const tbodyId = side === 'sell' ? 'sell-tbody' : 'buy-tbody';
+    if (!orders.length) {
+      return `<div class="market-order-side">
+        <div class="market-order-title">${title}</div>
+        <div class="market-order-empty">暂无${title.includes('卖') ? '卖单' : '买单'}</div>
+      </div>`;
+    }
+    return `<div class="market-order-side">
+      <div class="market-order-title">
+        ${title} (${orders.length})
+        <span class="sort-controls">${sortCtrlHTML(side, 'price', '价格')} ${sortCtrlHTML(side, 'status', '状态')}</span>
+      </div>
+      <table class="market-order-table"><tbody id="${tbodyId}"></tbody></table>
+    </div>`;
+  };
+
+  container.innerHTML = `
+    <div class="market-detail-head" id="market-detail-head">
+      <div class="market-detail-info">
+        <div class="market-detail-name">${marketName(item)}</div>
+        <div class="market-detail-meta">
+          <span>${mrText}</span>
+          ${taxText ? `<span>${taxText}</span>` : ''}
+          ${ducatsText ? `<span class="market-ducats">${ducatsText}</span>` : ''}
+        </div>
+      </div>
+    </div>
+    ${data.set_parts.length ? `
+    <div class="market-set-parts">
+      ${(() => {
+        const base = item.name.replace(/ Set$/, '');
+        return data.set_parts.map(p => {
+          let label = marketLang === 'zh' ? marketName(p) : p.name;
+          if (marketLang !== 'zh' && label.startsWith(base + ' ')) label = label.substring(base.length + 1);
+          if (marketLang !== 'zh') label = label.replace(/ Blueprint$/, '');
+          return `<span class="set-part-link" onclick="window._openSetPart('${p.slug}')" title="${marketName(p)}">${label}</span>`;
+        }).join('');
+      })()}
+    </div>` : ''}
+    <div class="market-orders">
+      ${makeOrderSide('sell', data.sell_orders, '卖家（最低价）')}
+      ${makeOrderSide('buy', data.buy_orders, '买家（最高价）')}
+    </div>
+    <button class="btn-backtop" id="btn-market-backtop" onclick="document.getElementById('tab-market').scrollTop=0" title="回到顶部">⬆</button>`;
+
+  (window as any)._copyWhisper = copyWhisper;
+  (window as any)._openSetPart = (slug: string) => openMarketItem(slug);
+  (window as any)._sortMarket = (side: 'sell' | 'buy', key: SortKey) => {
+    const sort = side === 'sell' ? _lazySellSort : _lazyBuySort;
+    if (sort.key === key) {
+      sort.dir = sort.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      sort.key = key;
+      sort.dir = key === 'price' ? (side === 'sell' ? 'asc' : 'desc') : 'asc';
+    }
+    // Update sort control labels
+    const sideEl = document.getElementById(side === 'sell' ? 'sell-tbody' : 'buy-tbody')?.closest('.market-order-side');
+    if (sideEl) {
+      const ctrls = sideEl.querySelector('.sort-controls');
+      if (ctrls) {
+        ctrls.innerHTML = `${sortCtrlHTML(side, 'price', '价格')} ${sortCtrlHTML(side, 'status', '状态')}`;
+      }
+    }
+    reloadOrderSide(side);
+  };
+
+  loadMoreOrders('sell');
+  loadMoreOrders('buy');
+}
+
+function showMarketSkeleton() {
+  _lastMarketDetail = null;
+  const container = document.getElementById('market-detail')!;
+  container.classList.remove('hidden');
+  container.innerHTML = `
+    <div class="market-skeleton">
+      <div class="market-skel-line med"></div>
+      <div class="market-skel-line short"></div>
+      <div class="market-skel-line med"></div>
+      <div class="market-skel-line short"></div>
+    </div>`;
+}
+
+function showMarketError(msg: string) {
+  const container = document.getElementById('market-detail')!;
+  container.classList.remove('hidden');
+  container.innerHTML = `
+    <div class="market-error">⚠️ ${msg}</div>
+    <div style="text-align:center"><button class="timer-btn-sm market-retry-btn" id="btn-market-retry">重试</button></div>`;
+}
+
+function updateMarketStatus(status: MarketCacheStatus) {
+  const text = `${status.count} 条 · ${status.last_updated}`;
+  document.getElementById('market-status-inline')!.textContent = text;
+  const settingsEl = document.getElementById('market-status-settings');
+  if (settingsEl) settingsEl.textContent = text;
+}
+
+// ── Market search & interaction ──
+
+async function doMarketSearch(query: string) {
+  const q = query.trim();
+  if (!q) {
+    document.getElementById('market-results')!.innerHTML = '';
+    _lastMarketResults = [];
+    return;
+  }
+  try {
+    const items = await invoke<MarketItemSummary[]>('search_market_items', { query: q, lang: marketLang });
+    renderMarketResults(items);
+  } catch (err) {
+    document.getElementById('market-results')!.innerHTML =
+      `<div class="market-error">搜索失败: ${err}</div>`;
+  }
+}
+
+async function openMarketItem(slug: string) {
+  marketOpenSlug = slug;
+  const reqId = ++marketReqId;
+  showMarketSkeleton();
+  // Hide search results while viewing detail
+  document.getElementById('market-results')!.innerHTML = '';
+
+  try {
+    const data = await invoke<MarketItemFull>('get_market_item', { slug });
+    if (reqId !== marketReqId) return;
+    renderMarketDetail(data);
+  } catch (err) {
+    if (reqId !== marketReqId) return;
+    showMarketError(String(err));
+  }
+}
+
+function closeMarketDetail() {
+  marketOpenSlug = null;
+  _lastMarketDetail = null;
+  ++marketReqId;
+  document.getElementById('market-detail')!.classList.add('hidden');
+  // Restore search results
+  const searchInput = document.getElementById('market-search') as HTMLInputElement;
+  if (searchInput.value.trim()) {
+    invoke<MarketItemSummary[]>('search_market_items', { query: searchInput.value.trim() })
+      .then(renderMarketResults)
+      .catch(() => {});
+  }
+}
+
 // Signature of subscription-relevant data: only rebuild alert UIs when
 // fissure mission types or arbitration node actually change (not every tick).
 let _refreshAlertsCb: (() => void) | null = null;
@@ -842,6 +1214,11 @@ window.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll<HTMLInputElement>('input[name="update-source"]').forEach(r => {
       r.checked = r.value === (cfg.update_source || 'gitee');
     });
+    // Init market language radio (default "en" if unset)
+    marketLang = cfg.market_language || 'en';
+    document.querySelectorAll<HTMLInputElement>('input[name="market-language"]').forEach(r => {
+      r.checked = r.value === marketLang;
+    });
     // Init custom reminder text inputs
     (document.getElementById('checkpoint-text') as HTMLInputElement).value = mt.checkpoint_alert_text ?? '';
     (document.getElementById('hp-text') as HTMLInputElement).value = mt.hp_alert_text ?? '';
@@ -1007,6 +1384,24 @@ window.addEventListener('DOMContentLoaded', () => {
       if (!this.checked || !currentConfig) return;
       currentConfig = { ...currentConfig, update_source: this.value };
       invoke('set_config', { config: currentConfig });
+    });
+  });
+
+  // Market language: persist + re-render current view
+  document.querySelectorAll('input[name="market-language"]').forEach(radio => {
+    radio.addEventListener('change', function(this: HTMLInputElement) {
+      if (!this.checked || !currentConfig) return;
+      marketLang = this.value;
+      currentConfig = { ...currentConfig, market_language: this.value };
+      invoke('set_config', { config: currentConfig });
+      // Re-render current view if any (no API re-fetch)
+      if (marketOpenSlug && _lastMarketDetail) {
+        renderMarketDetail(_lastMarketDetail);
+      }
+      // Re-render search results from cache
+      if (_lastMarketResults.length) {
+        renderMarketResults(_lastMarketResults);
+      }
     });
   });
 
@@ -1191,6 +1586,143 @@ window.addEventListener('DOMContentLoaded', () => {
     } else {
       // cycle / arbitration live on the 世界时间 tab.
       activateTab('cycles');
+    }
+  });
+
+  // ── Market event listeners ──────────────────────────────────────────
+  listen<number>('market-cache-ready', (_event) => {
+    invoke<MarketCacheStatus>('market_cache_status').then(updateMarketStatus).catch(() => {});
+  });
+
+  // Search input with debounce
+  const marketSearch = document.getElementById('market-search') as HTMLInputElement;
+  marketSearch.addEventListener('input', () => {
+    if (marketSearchTimer) clearTimeout(marketSearchTimer);
+    marketSearchTimer = setTimeout(() => {
+      doMarketSearch(marketSearch.value);
+    }, 200);
+  });
+  // Suppress search during IME composition
+  marketSearch.addEventListener('compositionstart', () => {
+    if (marketSearchTimer) clearTimeout(marketSearchTimer);
+  });
+  marketSearch.addEventListener('compositionend', () => {
+    marketSearchTimer = setTimeout(() => {
+      doMarketSearch(marketSearch.value);
+    }, 200);
+  });
+
+  // Click on a search result row → expand detail
+  document.getElementById('market-results')!.addEventListener('click', (e) => {
+    const row = (e.target as HTMLElement).closest('.market-result-row') as HTMLElement | null;
+    if (!row) return;
+    const slug = row.dataset.slug!;
+    if (marketOpenSlug === slug) {
+      closeMarketDetail();
+    } else {
+      openMarketItem(slug);
+    }
+  });
+
+  // Refresh cache button
+  document.getElementById('btn-market-refresh')!.addEventListener('click', async function(this: HTMLButtonElement) {
+    this.disabled = true;
+    this.textContent = '⏳';
+    const statusEl = document.getElementById('market-status-settings')!;
+    statusEl.textContent = '更新中…';
+    try {
+      await invoke<number>('refresh_market_cache');
+      const status = await invoke<MarketCacheStatus>('market_cache_status');
+      updateMarketStatus(status);
+    } catch (err) {
+      statusEl.textContent = `⚠️ ${err}`;
+    } finally {
+      this.disabled = false;
+      this.textContent = '🔄';
+    }
+  });
+
+  // ── Translation (zh→en) ──────────────────────────────────────────
+  let translateTimer: ReturnType<typeof setTimeout> | null = null;
+  const translateZh = document.getElementById('translate-zh') as HTMLInputElement;
+  const translateResults = document.getElementById('translate-results')!;
+
+  translateZh.addEventListener('input', () => {
+    if (translateTimer) clearTimeout(translateTimer);
+    const q = translateZh.value.trim();
+    if (!q) { translateResults.classList.add('hidden'); translateResults.innerHTML = ''; return; }
+    translateTimer = setTimeout(async () => {
+      try {
+        const items = await invoke<MarketItemSummary[]>('translate_items', { query: q });
+        if (!items.length) {
+          translateResults.innerHTML = '<div class="translate-empty">无匹配</div>';
+        } else {
+          translateResults.innerHTML = items.map(i => `
+            <div class="translate-row" data-en="${i.name}">
+              <span class="translate-en-name">${i.name}</span>
+              ${i.name_zh ? `<span class="translate-zh-name">${i.name_zh}</span>` : ''}
+            </div>`).join('');
+        }
+        translateResults.classList.remove('hidden');
+      } catch {
+        translateResults.innerHTML = '';
+        translateResults.classList.add('hidden');
+      }
+    }, 200);
+  });
+
+  // Click translate result → copy English name
+  translateResults.addEventListener('click', (e) => {
+    const row = (e.target as HTMLElement).closest('.translate-row') as HTMLElement | null;
+    if (!row) return;
+    const en = row.dataset.en || '';
+    navigator.clipboard.writeText(en).then(() => {
+      // Briefly highlight
+      row.style.background = 'rgba(79,195,247,0.2)';
+      setTimeout(() => { row.style.background = ''; }, 300);
+    }).catch(() => {});
+  });
+
+  // Hide translate results when clicking outside
+  document.addEventListener('click', (e) => {
+    if (!(e.target as HTMLElement).closest('#translate-wrap')) {
+      translateResults.classList.add('hidden');
+    }
+  });
+
+  // Focus on translate input → re-show results if has text
+  translateZh.addEventListener('focus', () => {
+    if (translateZh.value.trim() && translateResults.children.length > 0) {
+      translateResults.classList.remove('hidden');
+    }
+  });
+
+  // ── Detail panel: retry button (delegated) ──
+  document.getElementById('market-detail')!.addEventListener('click', (e) => {
+    if ((e.target as HTMLElement).id === 'btn-market-retry' && marketOpenSlug) {
+      openMarketItem(marketOpenSlug);
+    }
+  });
+
+  // When switching to market tab, lazily check cache status on first search input focus.
+  let marketStatusChecked = false;
+  marketSearch.addEventListener('focus', () => {
+    if (!marketStatusChecked) {
+      marketStatusChecked = true;
+      invoke<MarketCacheStatus>('market_cache_status').then(updateMarketStatus).catch(() => {});
+    }
+    // If detail is open, close it and restore search results
+    if (marketOpenSlug) {
+      closeMarketDetail();
+    }
+  });
+
+  // ── Back-to-top button: show when scrolled away from top ──
+  document.getElementById('tab-market')!.addEventListener('scroll', () => {
+    const btn = document.getElementById('btn-market-backtop');
+    if (btn) {
+      const tab = document.getElementById('tab-market')!;
+      btn.classList.toggle('visible', tab.scrollTop > 200);
     }
   });
 
