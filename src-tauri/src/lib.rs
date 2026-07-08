@@ -3,6 +3,8 @@ mod capture;
 mod config;
 mod item_i18n;
 mod market;
+mod market_auth;
+mod market_orders;
 mod mission_timer;
 mod models;
 mod ocr;
@@ -18,6 +20,8 @@ use models::{AppStatePayload, MissionTimerPayload};
 use config::{AppConfig, FissureAlert, CycleAlert, ArbitrationAlert, load_config, save_config};
 use api::{fetch_worldstate, parse_fissures, parse_cycles, parse_void_trader, parse_bounties, parse_circuit, parse_arbitration, parse_vallis_cycle, parse_duviri_cycle, fmt_remain, fmt_remain_baro, fmt_remain_days, now_ms};
 use market::{search_market_items, get_market_item, refresh_market_cache, market_cache_status, translate_items};
+use market_auth::{market_signin, market_signout, market_auth_status, SharedMarketAuth, load_or_create_auth};
+use market_orders::{market_list_orders, market_create_order, market_update_order, market_delete_order, market_close_order};
 use std::sync::mpsc;
 use mission_timer::{AlertMsg, MissionTimerState, TimerCommand, start_timer_thread};
 use tauri_plugin_notification::NotificationExt;
@@ -1004,6 +1008,7 @@ pub fn run() {
     // Guards against concurrent manual refresh requests (button spam / tray spam).
     let refreshing: Arc<RefreshGuard> = Arc::new(RefreshGuard(Arc::new(std::sync::atomic::AtomicBool::new(false))));
     let market_cache: market::SharedMarketCache = Arc::new(tokio::sync::RwLock::new(market::build_cache(&app_data_dir)));
+    let market_auth: SharedMarketAuth = load_or_create_auth(&app_data_dir);
 
     tauri::Builder::default()
         .manage(state.clone())
@@ -1015,6 +1020,7 @@ pub fn run() {
         .manage(hide_gen.clone())
         .manage(refreshing.clone())
         .manage(market_cache.clone())
+        .manage(market_auth.clone())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -1481,7 +1487,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, timer_command, list_windows, select_window, single_capture, capture_preview, test_recognize, test_alert, update_item_names, item_names_count, game_data_version, get_notifications, clear_notifications, open_main_navigate, get_autostart, set_autostart, uninstall_clean, check_for_update, install_update, get_bark_url, test_phone_push, search_market_items, get_market_item, refresh_market_cache, market_cache_status, translate_items])
+        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, timer_command, list_windows, select_window, single_capture, capture_preview, test_recognize, test_alert, update_item_names, item_names_count, game_data_version, get_notifications, clear_notifications, open_main_navigate, get_autostart, set_autostart, uninstall_clean, check_for_update, install_update, get_bark_url, test_phone_push, search_market_items, get_market_item, refresh_market_cache, market_cache_status, translate_items, market_signin, market_signout, market_auth_status, market_list_orders, market_create_order, market_update_order, market_delete_order, market_close_order])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

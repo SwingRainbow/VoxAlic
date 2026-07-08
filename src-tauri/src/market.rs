@@ -22,7 +22,7 @@ const FILE_NAME: &str = "market_items.json";
 
 // ── Shared HTTP client (reused — TLS / DNS overhead paid once) ──────────────
 
-fn client() -> &'static reqwest::Client {
+pub(crate) fn market_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
@@ -313,7 +313,7 @@ fn search_local(cache: &MarketCache, query: &str, lang: &str) -> Vec<MarketItemS
 
 async fn fetch_detail(slug: &str) -> Result<CachedDetail, String> {
     let url = format!("{}/item/{}", MARKET_API_BASE, slug);
-    let resp = client()
+    let resp = market_client()
         .get(&url)
         .header("Language", "zh-hans")
         .send()
@@ -337,7 +337,7 @@ async fn fetch_detail(slug: &str) -> Result<CachedDetail, String> {
 
 async fn fetch_orders(slug: &str) -> Result<(Vec<MarketOrder>, Vec<MarketOrder>), String> {
     let url = format!("{}/orders/item/{}", MARKET_API_BASE, slug);
-    let resp = client()
+    let resp = market_client()
         .get(&url)
         .timeout(std::time::Duration::from_secs(120))
         .header("Language", "zh-hans")
@@ -470,7 +470,7 @@ pub async fn refresh_market_cache(
     cache: tauri::State<'_, SharedMarketCache>,
     app_handle: tauri::AppHandle,
 ) -> Result<usize, String> {
-    let resp = client()
+    let resp = market_client()
         .get(ITEMS_URL)
         .timeout(std::time::Duration::from_secs(1800))
         .header("Language", "zh-hans")

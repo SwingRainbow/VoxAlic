@@ -233,3 +233,58 @@ pub struct MarketCacheStatus {
     pub count: usize,
     pub last_updated: String,
 }
+
+// ── Warframe.Market Auth & Orders ──────────────────────────────────────────
+
+/// Structured error returned by all market auth/order commands.
+/// Frontend reads `code` to decide display behaviour.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketError {
+    pub code: String,    // "wrong_password" | "duplicate_price" | "auth_expired" | ...
+    pub message: String, // 中文用户提示
+}
+
+/// Lightweight auth status for the frontend login chip.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketAuthStatus {
+    pub logged_in: bool,
+    pub ingame_name: Option<String>,
+}
+
+/// Request body for creating a profile order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateOrderRequest {
+    pub item_id: String,
+    pub order_type: String, // "sell" | "buy"
+    pub platinum: u32,
+    pub quantity: u32,
+    pub rank: u8,
+    pub visible: bool,
+}
+
+/// Request body for updating a profile order (partial — send only changed fields).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateOrderRequest {
+    pub order_id: String,
+    pub platinum: Option<u32>,
+    pub quantity: Option<u32>,
+    pub visible: Option<bool>,
+    pub rank: Option<u8>,
+}
+
+/// A profile order returned by GET /v1/profile/orders.
+/// Differs from MarketOrder (which is from the public /orders/item/{slug} endpoint).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfileOrder {
+    pub id: String,
+    pub order_type: String,  // "sell" | "buy"
+    pub item_id: String,
+    pub item_slug: String,   // resolved from MarketCache on the Rust side
+    pub item_name: String,   // item display name (zh or en)
+    pub platinum: u32,
+    pub quantity: u32,
+    pub rank: u8,
+    pub visible: bool,
+    pub platform: String,
+    pub creation_date: String,
+}

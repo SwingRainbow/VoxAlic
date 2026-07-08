@@ -59,8 +59,13 @@
           <input type="text" id="translate-zh" class="translate-input" placeholder="中→英…" autocomplete="off" />
           <div class="translate-results hidden" id="translate-results"></div>
         </div>
+        <span class="market-auth-chip" id="market-auth-chip" title="点击登录 Warframe.Market">🔒 未登录</span>
       </div>
       <div id="market-results" class="market-results"></div>
+      <details class="market-my-orders" id="market-my-orders" hidden>
+        <summary class="market-my-orders-summary">我的订单 (<span id="my-orders-count">0</span>)</summary>
+        <div class="market-my-orders-list" id="my-orders-list"></div>
+      </details>
     </div>
     <div id="market-detail" class="market-detail hidden"></div>
   </div>
@@ -227,6 +232,28 @@
         <button class="timer-btn-sm" id="btn-confirm-update">立即安装</button>
       </div>
       <div class="calib-result" id="update-modal-status" style="margin-top:6px;text-align:center"></div>
+    </div>
+  </div>
+
+  <!-- Market login modal -->
+  <div id="market-login-modal" class="modal-overlay hidden">
+    <div class="modal-box">
+      <div class="modal-title">登录 Warframe.Market</div>
+      <label class="settings-text-row">
+        <span>邮箱</span>
+        <input type="email" id="market-login-email" placeholder="player@example.com" autocomplete="email" />
+      </label>
+      <label class="settings-text-row">
+        <span>密码</span>
+        <input type="password" id="market-login-password" placeholder="密码" />
+      </label>
+      <div class="modal-actions">
+        <a href="https://warframe.market/auth/registration" target="_blank" class="market-register-link">注册账号（浏览器打开）</a>
+        <button class="timer-btn-sm" id="btn-market-login">登录</button>
+        <button class="timer-btn-sm" id="btn-market-logout" style="display:none">登出</button>
+        <button class="timer-btn-sm" id="btn-market-login-cancel">取消</button>
+        <span class="calib-result" id="market-login-status" style="margin-left:8px"></span>
+      </div>
     </div>
   </div>
 

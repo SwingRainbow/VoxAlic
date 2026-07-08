@@ -1418,3 +1418,208 @@ tr.expiring td:last-child { color: var(--warn); font-weight: bold; }
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
 }
+
+/* ── Market Auth & Orders ─────────────────────────────────────────────────── */
+
+/* Auth chip in search bar */
+.market-auth-chip {
+  flex: 0 0 auto;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--dim);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  user-select: none;
+}
+.market-auth-chip:hover { border-color: var(--accent-dim); color: var(--text); }
+.market-auth-chip.logged-in {
+  color: #6fcf97;
+  border-color: #2e5d3e;
+  background: #1e2e24;
+}
+
+/* My Orders collapsible */
+.market-my-orders {
+  margin-top: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+.market-my-orders[open] { border-color: var(--border); }
+.market-my-orders-summary {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--dim);
+  user-select: none;
+  transition: color 0.15s;
+}
+.market-my-orders-summary:hover { color: var(--text); }
+.market-my-orders-summary::-webkit-details-marker { display: none; }
+.market-my-orders-summary::before { content: '▸'; color: var(--dim); margin-right: 6px; font-size: 11px; }
+.market-my-orders[open] .market-my-orders-summary::before { content: '▾'; }
+
+.market-my-orders-list { padding: 0 12px 10px; }
+
+.my-order-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 13px;
+}
+.my-order-row:last-child { border-bottom: none; }
+.my-order-type {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.my-order-type.sell { background: #2e3d2e; color: #8fcf8f; }
+.my-order-type.buy { background: #2e2e3d; color: #8f8fcf; }
+.my-order-name {
+  flex: 1;
+  color: var(--text);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.my-order-name:hover { color: var(--accent); }
+.my-order-price { color: var(--accent); font-family: 'Consolas', monospace; white-space: nowrap; }
+.my-order-meta { font-size: 11px; color: var(--dim); white-space: nowrap; }
+.my-order-actions { display: flex; gap: 6px; }
+.my-order-actions button {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface-2);
+  color: var(--dim);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.my-order-actions button:hover { color: var(--text); border-color: var(--dim); }
+.my-order-actions .btn-order-delete:hover { color: var(--warn); border-color: var(--warn); }
+.my-orders-empty { font-size: 12px; color: var(--dim); padding: 8px 0; text-align: center; }
+
+/* Order form (inline in detail panel) */
+.market-order-form {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--accent-dim);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.market-order-form-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+.market-order-form-ref {
+  font-size: 11px;
+  color: var(--dim);
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+.market-order-form-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.market-order-form-row label {
+  font-size: 12px;
+  color: var(--dim);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.market-order-form-row input[type="number"] {
+  width: 80px;
+  padding: 3px 6px;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: 'Consolas', monospace;
+}
+.market-order-form-row input[type="number"]:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.market-order-form-row select {
+  padding: 3px 6px;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+.market-order-form-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--dim);
+  cursor: pointer;
+  user-select: none;
+}
+.market-order-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.market-order-form-status {
+  font-size: 12px;
+  color: var(--warn);
+}
+.market-order-form-status.ok { color: #6fcf97; }
+
+/* My existing orders hint in detail panel */
+.market-my-item-orders {
+  font-size: 12px;
+  color: var(--dim);
+  margin-bottom: 6px;
+  padding: 4px 8px;
+  background: var(--surface-2);
+  border-radius: 3px;
+}
+
+/* Create-order buttons in detail head */
+.market-detail-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+.market-detail-actions button {
+  font-size: 12px;
+  padding: 3px 10px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.market-detail-actions button:hover { background: var(--accent-dim); }
+
+/* Register link in login modal */
+.market-register-link {
+  font-size: 11px;
+  color: var(--accent-dim);
+  text-decoration: none;
+  padding: 4px 0;
+}
+.market-register-link:hover { color: var(--accent); text-decoration: underline; }

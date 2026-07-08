@@ -208,6 +208,49 @@ interface MarketCacheStatus {
   last_updated: string;
 }
 
+// ── Market Auth & Orders types ──
+
+interface MarketAuthStatus {
+  logged_in: boolean;
+  ingame_name: string | null;
+}
+
+interface ProfileOrder {
+  id: string;
+  order_type: string;   // "sell" | "buy"
+  item_id: string;
+  item_slug: string;
+  item_name: string;
+  platinum: number;
+  quantity: number;
+  rank: number;
+  visible: boolean;
+  platform: string;
+  creation_date: string;
+}
+
+interface CreateOrderRequest {
+  item_id: string;
+  order_type: string;
+  platinum: number;
+  quantity: number;
+  rank: number;
+  visible: boolean;
+}
+
+interface UpdateOrderRequest {
+  order_id: string;
+  platinum?: number;
+  quantity?: number;
+  visible?: boolean;
+  rank?: number;
+}
+
+interface MarketCommandError {
+  code: string;
+  message: string;
+}
+
 // ── Tier colors (match Python original) ──
 const TIER_BG: Record<string, string> = {
   VoidT1: '#564b43', VoidT2: '#3e4140', VoidT3: '#383839',
@@ -258,6 +301,13 @@ let marketSearchTimer: ReturnType<typeof setTimeout> | null = null;
 let marketLang: string = 'en';             // 'en' | 'zh'
 let _lastMarketDetail: MarketItemFull | null = null;  // cached for language-switch re-render
 let _lastMarketResults: MarketItemSummary[] = [];     // last search results (for hot-switch)
+
+// ── Market auth & orders state ──
+let marketAuthName: string | null = null;       // logged-in ingame_name; null = not logged in
+let myOrders: ProfileOrder[] = [];              // own profile orders
+let myOrdersBySlug: Map<string, number> = new Map(); // slug → order count (fast lookup)
+let orderFormSlug: string | null = null;        // slug whose order form is open
+let orderFormSide: 'sell' | 'buy' = 'sell';     // which side the form is for
 
 /** Return the display name for an item based on current market language. */
 function marketName(item: { name: string; name_zh?: string }): string {
@@ -915,6 +965,12 @@ function renderMarketDetail(data: MarketItemFull) {
         </div>
       </div>
     </div>
+    ${marketAuthName ? `
+    <div class="market-detail-actions" id="market-detail-actions">
+      <button id="btn-create-sell" onclick="window._showOrderForm('${item.slug}','sell')">📝 挂单出售</button>
+      <button id="btn-create-buy" onclick="window._showOrderForm('${item.slug}','buy')">📝 挂单求购</button>
+    </div>` : ''}
+    ${orderFormSlug === item.slug ? orderFormHTML(item.slug, orderFormSide) : ''}
     ${data.set_parts.length ? `
     <div class="market-set-parts">
       ${(() => {
@@ -935,6 +991,10 @@ function renderMarketDetail(data: MarketItemFull) {
 
   (window as any)._copyWhisper = copyWhisper;
   (window as any)._openSetPart = (slug: string) => openMarketItem(slug);
+  (window as any)._showOrderForm = (slug: string, side: 'sell' | 'buy') => renderOrderForm(slug, side);
+  (window as any)._editMyOrder = (orderId: string) => handleEditOrder(orderId);
+  (window as any)._deleteMyOrder = (orderId: string) => handleDeleteOrder(orderId);
+  (window as any)._openMarketItem = (slug: string) => openMarketItem(slug);
   (window as any)._sortMarket = (side: 'sell' | 'buy', key: SortKey) => {
     const sort = side === 'sell' ? _lazySellSort : _lazyBuySort;
     if (sort.key === key) {
@@ -953,6 +1013,12 @@ function renderMarketDetail(data: MarketItemFull) {
     }
     reloadOrderSide(side);
   };
+
+  // Bind order-form buttons if form is present.
+  const submitBtn = document.getElementById('btn-order-submit');
+  const cancelBtn = document.getElementById('btn-order-cancel');
+  if (submitBtn) submitBtn.addEventListener('click', handleCreateOrder);
+  if (cancelBtn) cancelBtn.addEventListener('click', hideOrderForm);
 
   loadMoreOrders('sell');
   loadMoreOrders('buy');
@@ -984,6 +1050,284 @@ function updateMarketStatus(status: MarketCacheStatus) {
   document.getElementById('market-status-inline')!.textContent = text;
   const settingsEl = document.getElementById('market-status-settings');
   if (settingsEl) settingsEl.textContent = text;
+}
+
+// ── Market auth & orders ──────────────────────────────────────────────────
+
+/** Generic invoke wrapper — catches MarketError and dispatches by code. */
+async function marketInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  try {
+    return await invoke<T>(cmd, args);
+  } catch (err: any) {
+    if (err?.code && err?.message) {
+      throw err as MarketCommandError;
+    }
+    throw { code: 'unknown', message: String(err) } as MarketCommandError;
+  }
+}
+
+/** Handle auth_expired globally — clear state, update chip, close forms. */
+function handleAuthExpired() {
+  marketAuthName = null;
+  myOrders = [];
+  myOrdersBySlug.clear();
+  orderFormSlug = null;
+  updateAuthChip();
+  renderMyOrders();
+  if (_lastMarketDetail) renderMarketDetail(_lastMarketDetail);
+}
+
+function updateAuthChip() {
+  const chip = document.getElementById('market-auth-chip')!;
+  if (marketAuthName) {
+    chip.textContent = `✓ ${marketAuthName}`;
+    chip.className = 'market-auth-chip logged-in';
+    chip.title = `已登录: ${marketAuthName} — 点击管理账号`;
+  } else {
+    chip.textContent = '🔒 未登录';
+    chip.className = 'market-auth-chip';
+    chip.title = '点击登录 Warframe.Market';
+  }
+  // Show/hide my-orders section
+  const panel = document.getElementById('market-my-orders') as HTMLDetailsElement;
+  panel.hidden = !marketAuthName;
+  if (!marketAuthName) {
+    panel.open = false;
+  }
+}
+
+async function initMarketAuth() {
+  try {
+    const status = await marketInvoke<MarketAuthStatus>('market_auth_status');
+    if (status.logged_in && status.ingame_name) {
+      marketAuthName = status.ingame_name;
+      updateAuthChip();
+      // Lazy-load orders in background.
+      refreshMyOrders();
+    }
+  } catch (_) {
+    // Not logged in — chip already shows default.
+  }
+}
+
+async function refreshMyOrders() {
+  if (!marketAuthName) return;
+  try {
+    myOrders = await marketInvoke<ProfileOrder[]>('market_list_orders');
+  } catch (err: any) {
+    if (err?.code === 'auth_expired') { handleAuthExpired(); return; }
+    myOrders = [];
+  }
+  // Rebuild slug→count map
+  myOrdersBySlug.clear();
+  for (const o of myOrders) {
+    const slug = o.item_slug || o.item_id;
+    myOrdersBySlug.set(slug, (myOrdersBySlug.get(slug) || 0) + 1);
+  }
+  renderMyOrders();
+}
+
+function renderMyOrders() {
+  const listEl = document.getElementById('my-orders-list')!;
+  const countEl = document.getElementById('my-orders-count')!;
+  countEl.textContent = String(myOrders.length);
+
+  if (myOrders.length === 0) {
+    listEl.innerHTML = '<div class="my-orders-empty">暂无订单</div>';
+    return;
+  }
+
+  listEl.innerHTML = myOrders.map(o => {
+    const sideCls = o.order_type === 'sell' ? 'sell' : 'buy';
+    const sideLabel = o.order_type === 'sell' ? '卖' : '买';
+    const visLabel = o.visible ? '' : ' 🔒';
+    return `<div class="my-order-row">
+      <span class="my-order-type ${sideCls}">${sideLabel}</span>
+      <span class="my-order-name" onclick="window._openMarketItem('${o.item_slug || o.item_id}')" title="${o.item_name}">${o.item_name}</span>
+      <span class="my-order-price">${o.platinum}p</span>
+      <span class="my-order-meta">×${o.quantity}${visLabel}</span>
+      <span class="my-order-actions">
+        <button onclick="window._editMyOrder('${o.id}')" title="编辑">✎</button>
+        <button class="btn-order-delete" onclick="window._deleteMyOrder('${o.id}')" title="删除">✕</button>
+      </span>
+    </div>`;
+  }).join('');
+}
+
+function renderOrderForm(slug: string, side: 'sell' | 'buy') {
+  orderFormSlug = slug;
+  orderFormSide = side;
+  if (!_lastMarketDetail || _lastMarketDetail.item.slug !== slug) return;
+  // Re-render detail to show form.
+  renderMarketDetail(_lastMarketDetail);
+}
+
+function hideOrderForm() {
+  orderFormSlug = null;
+  if (_lastMarketDetail) renderMarketDetail(_lastMarketDetail);
+}
+
+function orderFormHTML(slug: string, side: 'sell' | 'buy'): string {
+  const item = _lastMarketDetail?.item;
+  if (!item) return '';
+  const maxRank = item.max_rank ?? 0;
+  const existingCount = myOrdersBySlug.get(slug) || 0;
+  const remaining = Math.max(0, 3 - existingCount);
+  const sideLabel = side === 'sell' ? '出售' : '求购';
+
+  // Build rank selector if applicable.
+  let rankHtml = '';
+  if (maxRank > 0) {
+    const opts = Array.from({ length: maxRank + 1 }, (_, i) =>
+      `<option value="${i}">${i}</option>`
+    ).join('');
+    rankHtml = `<label>等级 <select id="order-form-rank">${opts}</select></label>`;
+  }
+
+  // Reference prices from current orders.
+  const sellOrders = _lastMarketDetail?.sell_orders ?? [];
+  const buyOrders = _lastMarketDetail?.buy_orders ?? [];
+  let refHtml = '';
+  if (sellOrders.length > 0 && buyOrders.length > 0) {
+    refHtml = `<div class="market-order-form-ref">当前行情: 最低卖价 <b style="color:#8fcf8f">${sellOrders[0].platinum}p</b> · 最高买价 <b style="color:#8f8fcf">${buyOrders[0].platinum}p</b></div>`;
+  }
+
+  let existingHtml = '';
+  if (existingCount > 0) {
+    existingHtml = `<div class="market-my-item-orders">你已有 <b>${existingCount}</b> 个${side === 'sell' ? '卖' : '买'}单（还可再挂 <b>${remaining}</b> 单）</div>`;
+  }
+
+  const disabled = remaining <= 0 ? 'disabled' : '';
+
+  return `<div class="market-order-form">
+    <div class="market-order-form-title">新建${sideLabel}单: ${marketName(item)}</div>
+    ${refHtml}
+    ${existingHtml}
+    <div class="market-order-form-row">
+      <label>价格 <input type="number" id="order-form-price" min="1" max="999999" value="${side === 'sell' ? (sellOrders[0]?.platinum ?? 10) : (buyOrders[0]?.platinum ?? 10)}" ${disabled} /></label>
+      <label>数量 <input type="number" id="order-form-qty" min="1" max="100" value="1" ${disabled} /></label>
+      ${rankHtml}
+    </div>
+    <div class="market-order-form-row">
+      <label class="market-order-form-toggle">
+        <input type="checkbox" id="order-form-visible" checked ${disabled} /> 公开可见
+      </label>
+    </div>
+    <div class="market-order-form-actions">
+      <button class="timer-btn-sm" id="btn-order-submit" ${disabled}>确认挂单</button>
+      <button class="timer-btn-sm" id="btn-order-cancel">取消</button>
+      <span class="market-order-form-status" id="order-form-status"></span>
+    </div>
+  </div>`;
+}
+
+async function handleCreateOrder() {
+  if (!orderFormSlug) return;
+  const item = _lastMarketDetail?.item;
+  if (!item) return;
+
+  const priceInput = document.getElementById('order-form-price') as HTMLInputElement;
+  const qtyInput = document.getElementById('order-form-qty') as HTMLInputElement;
+  const visibleCb = document.getElementById('order-form-visible') as HTMLInputElement;
+  const rankEl = document.getElementById('order-form-rank') as HTMLSelectElement | null;
+  const statusEl = document.getElementById('order-form-status')!;
+  const submitBtn = document.getElementById('btn-order-submit') as HTMLButtonElement;
+
+  const platinum = parseInt(priceInput?.value || '0', 10);
+  const quantity = parseInt(qtyInput?.value || '0', 10);
+  const visible = visibleCb?.checked ?? true;
+  const rank = rankEl ? parseInt(rankEl.value, 10) : 0;
+
+  if (platinum < 1 || platinum > 999999) {
+    statusEl.textContent = '价格必须在 1 ～ 999,999 之间';
+    statusEl.className = 'market-order-form-status';
+    return;
+  }
+  if (quantity < 1 || quantity > 100) {
+    statusEl.textContent = '数量必须在 1 ～ 100 之间';
+    statusEl.className = 'market-order-form-status';
+    return;
+  }
+
+  statusEl.textContent = '挂单中…';
+  statusEl.className = 'market-order-form-status';
+  submitBtn.disabled = true;
+
+  try {
+    await marketInvoke<ProfileOrder>('market_create_order', {
+      req: {
+        item_id: item.slug, // Will be resolved by Rust side's MarketCache
+        order_type: orderFormSide,
+        platinum,
+        quantity,
+        rank,
+        visible,
+      } as CreateOrderRequest,
+    });
+    statusEl.textContent = '✅ 挂单成功';
+    statusEl.className = 'market-order-form-status ok';
+    orderFormSlug = null;
+    await refreshMyOrders();
+    // Refresh detail to show updated orders
+    if (orderFormSlug === null) {
+      // re-open the same item to refresh its order tables
+      openMarketItem(item.slug);
+    }
+  } catch (err: any) {
+    if (err?.code === 'auth_expired') {
+      handleAuthExpired();
+      return;
+    }
+    statusEl.textContent = err?.message || '挂单失败';
+    statusEl.className = 'market-order-form-status';
+  } finally {
+    submitBtn.disabled = false;
+  }
+}
+
+async function handleEditOrder(orderId: string) {
+  const order = myOrders.find(o => o.id === orderId);
+  if (!order) return;
+
+  const newPriceStr = prompt(`修改价格 (当前 ${order.platinum}p):`, String(order.platinum));
+  if (newPriceStr === null) return;
+  const newPrice = parseInt(newPriceStr, 10);
+  if (isNaN(newPrice) || newPrice < 1 || newPrice > 999999) { alert('价格无效'); return; }
+
+  const newQtyStr = prompt(`修改数量 (当前 ${order.quantity}):`, String(order.quantity));
+  if (newQtyStr === null) return;
+  const newQty = parseInt(newQtyStr, 10);
+  if (isNaN(newQty) || newQty < 1 || newQty > 100) { alert('数量无效'); return; }
+
+  try {
+    await marketInvoke<ProfileOrder>('market_update_order', {
+      req: {
+        order_id: order.id,
+        platinum: newPrice,
+        quantity: newQty,
+        visible: order.visible,
+        rank: order.rank,
+      } as UpdateOrderRequest,
+    });
+    await refreshMyOrders();
+  } catch (err: any) {
+    if (err?.code === 'auth_expired') { handleAuthExpired(); return; }
+    alert(err?.message || '修改失败');
+  }
+}
+
+async function handleDeleteOrder(orderId: string) {
+  const order = myOrders.find(o => o.id === orderId);
+  if (!order) return;
+  if (!confirm(`确定删除此订单？\n${order.item_name} — ${order.platinum}p ×${order.quantity}`)) return;
+
+  try {
+    await marketInvoke<void>('market_delete_order', { orderId });
+    await refreshMyOrders();
+  } catch (err: any) {
+    if (err?.code === 'auth_expired') { handleAuthExpired(); return; }
+    alert(err?.message || '删除失败');
+  }
 }
 
 // ── Market search & interaction ──
@@ -1640,6 +1984,87 @@ window.addEventListener('DOMContentLoaded', () => {
       this.disabled = false;
       this.textContent = '🔄';
     }
+  });
+
+  // ── Market auth & orders event listeners ───────────────────────────
+  // Init auth on startup.
+  initMarketAuth();
+
+  // Auth chip → open login modal.
+  document.getElementById('market-auth-chip')!.addEventListener('click', () => {
+    if (marketAuthName) {
+      // Logged in — show logout option.
+      const modal = document.getElementById('market-login-modal')!;
+      modal.classList.remove('hidden');
+      (document.getElementById('btn-market-login') as HTMLButtonElement).style.display = 'none';
+      (document.getElementById('btn-market-logout') as HTMLButtonElement).style.display = '';
+      (document.getElementById('market-login-status')!).textContent = '';
+      return;
+    }
+    // Not logged in — show login form.
+    const modal = document.getElementById('market-login-modal')!;
+    modal.classList.remove('hidden');
+    (document.getElementById('market-login-email') as HTMLInputElement).value = '';
+    (document.getElementById('market-login-password') as HTMLInputElement).value = '';
+    (document.getElementById('market-login-status')!).textContent = '';
+    (document.getElementById('btn-market-login') as HTMLButtonElement).style.display = '';
+    (document.getElementById('btn-market-logout') as HTMLButtonElement).style.display = 'none';
+  });
+
+  // Login modal — cancel
+  document.getElementById('btn-market-login-cancel')!.addEventListener('click', () => {
+    document.getElementById('market-login-modal')!.classList.add('hidden');
+  });
+
+  // Login modal — login
+  document.getElementById('btn-market-login')!.addEventListener('click', async () => {
+    const email = (document.getElementById('market-login-email') as HTMLInputElement).value.trim();
+    const password = (document.getElementById('market-login-password') as HTMLInputElement).value;
+    const statusEl = document.getElementById('market-login-status')!;
+    const loginBtn = document.getElementById('btn-market-login') as HTMLButtonElement;
+
+    if (!email || !email.includes('@')) {
+      statusEl.textContent = '请输入有效的邮箱地址';
+      return;
+    }
+    if (!password) {
+      statusEl.textContent = '请输入密码';
+      return;
+    }
+
+    statusEl.textContent = '登录中…';
+    loginBtn.disabled = true;
+
+    try {
+      const result = await marketInvoke<MarketAuthStatus>('market_signin', { email, password });
+      marketAuthName = result.ingame_name;
+      updateAuthChip();
+      document.getElementById('market-login-modal')!.classList.add('hidden');
+      await refreshMyOrders();
+    } catch (err: any) {
+      if (err?.code === 'auth_expired') { handleAuthExpired(); return; }
+      statusEl.textContent = err?.message || '登录失败';
+    } finally {
+      loginBtn.disabled = false;
+    }
+  });
+
+  // Login modal — logout
+  document.getElementById('btn-market-logout')!.addEventListener('click', async () => {
+    const statusEl = document.getElementById('market-login-status')!;
+    statusEl.textContent = '登出中…';
+    try {
+      await marketInvoke<void>('market_signout');
+      handleAuthExpired();
+      document.getElementById('market-login-modal')!.classList.add('hidden');
+    } catch (err: any) {
+      statusEl.textContent = err?.message || '登出失败';
+    }
+  });
+
+  // My orders panel — refresh on expand
+  (document.getElementById('market-my-orders') as HTMLDetailsElement).addEventListener('toggle', function() {
+    if (this.open && marketAuthName) refreshMyOrders();
   });
 
   // ── Translation (zh→en) ──────────────────────────────────────────
