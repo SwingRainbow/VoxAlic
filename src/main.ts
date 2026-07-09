@@ -213,6 +213,9 @@ interface MarketCacheStatus {
 interface MarketAuthStatus {
   logged_in: boolean;
   ingame_name: string | null;
+  avatar: string | null;
+  reputation: number | null;
+  current_status: string | null;
 }
 
 interface ProfileOrder {
@@ -304,6 +307,9 @@ let _lastMarketResults: MarketItemSummary[] = [];     // last search results (fo
 
 // ── Market auth & orders state ──
 let marketAuthName: string | null = null;       // logged-in ingame_name; null = not logged in
+let marketAuthAvatar: string | null = null;     // avatar URL
+let marketAuthStatus: string | null = null;     // current online status (online/ingame/invisible)
+let marketAuthRep: number | null = null;        // reputation score
 let myOrders: ProfileOrder[] = [];              // own profile orders
 let myOrdersBySlug: Map<string, number> = new Map(); // slug → order count (fast lookup)
 let orderFormSlug: string | null = null;        // slug whose order form is open
@@ -313,6 +319,36 @@ let orderFormSide: 'sell' | 'buy' = 'sell';     // which side the form is for
 function marketName(item: { name: string; name_zh?: string }): string {
   if (marketLang === 'zh' && item.name_zh) return item.name_zh;
   return item.name;
+}
+
+/** Update dropdown content from current auth state. */
+function updateAuthDropdown() {
+  const dd = document.getElementById('auth-dropdown')!;
+  if (!marketAuthName) { dd.classList.add('hidden'); return; }
+  const avatarEl = document.getElementById('auth-avatar') as HTMLImageElement;
+  if (marketAuthAvatar) {
+    avatarEl.src = marketAuthAvatar;
+    avatarEl.style.display = '';
+  } else {
+    avatarEl.style.display = 'none';
+  }
+  document.getElementById('auth-name')!.textContent = marketAuthName;
+  const repEl = document.getElementById('auth-rep')!;
+  if (marketAuthRep != null) {
+    repEl.textContent = `声望 ${marketAuthRep >= 0 ? '+' : ''}${marketAuthRep}`;
+    repEl.style.display = '';
+  } else {
+    repEl.style.display = 'none';
+  }
+  // Pre-select the current status radio.
+  if (marketAuthStatus) {
+    const radio = document.querySelector(`input[name="wm-status"][value="${marketAuthStatus}"]`) as HTMLInputElement | null;
+    if (radio) radio.checked = true;
+  }
+}
+
+function closeAuthDropdown() {
+  document.getElementById('auth-dropdown')!.classList.add('hidden');
 }
 
 // ── Render functions ──
@@ -1069,6 +1105,9 @@ async function marketInvoke<T>(cmd: string, args?: Record<string, unknown>): Pro
 /** Handle auth_expired globally — clear state, update chip, close forms. */
 function handleAuthExpired() {
   marketAuthName = null;
+  marketAuthAvatar = null;
+  marketAuthStatus = null;
+  marketAuthRep = null;
   myOrders = [];
   myOrdersBySlug.clear();
   orderFormSlug = null;
@@ -1094,6 +1133,8 @@ function updateAuthChip() {
   if (!marketAuthName) {
     panel.open = false;
   }
+  // Update dropdown content
+  updateAuthDropdown();
 }
 
 async function initMarketAuth() {
@@ -1101,8 +1142,10 @@ async function initMarketAuth() {
     const status = await marketInvoke<MarketAuthStatus>('market_auth_status');
     if (status.logged_in && status.ingame_name) {
       marketAuthName = status.ingame_name;
+      marketAuthAvatar = status.avatar ?? null;
+      marketAuthStatus = status.current_status ?? null;
+      marketAuthRep = status.reputation ?? null;
       updateAuthChip();
-      // Lazy-load orders in background.
       refreshMyOrders();
     }
   } catch (_) {
@@ -1987,18 +2030,81 @@ window.addEventListener('DOMContentLoaded', () => {
   });
 
   // ── Market auth & orders event listeners ───────────────────────────
-  // Init auth on startup.
+
+  // Register WS listeners BEFORE initMarketAuth so events from the
+  // auto-started WebSocket task are not lost.
+  listen<string>('market-ws-log', (_event) => {
+    // Debug log suppressed in production.
+  });
+
+  listen<string>('market-status-change', (event) => {
+    marketAuthStatus = event.payload;
+    const radio = document.querySelector(`input[name="wm-status"][value="${event.payload}"]`) as HTMLInputElement | null;
+    if (radio) radio.checked = true;
+  });
+
+  // WS connection state → degraded UI until initial status sync completes.
+  let wsDisconnectedAt: number | null = null;
+  listen<string>('market-ws-state', (event) => {
+    const radios = document.getElementById('auth-status-radios');
+    const hint = document.getElementById('auth-status-hint');
+    if (event.payload === 'ready') {
+      // Server confirmed our status — unlock radios.
+      wsDisconnectedAt = null;
+      if (radios) radios.classList.remove('degraded');
+      if (hint) { hint.textContent = ''; hint.classList.remove('visible'); }
+    } else if (event.payload === 'connected') {
+      // Connected but status not yet confirmed — keep locked, show progress.
+      wsDisconnectedAt = null;
+      if (hint) { hint.textContent = '已连接，同步状态中…'; hint.classList.add('visible'); }
+    } else {
+      // Disconnected — degrade after 30s.
+      wsDisconnectedAt = Date.now();
+      if (hint) { hint.textContent = 'WebSocket 重连中…'; }
+      setTimeout(() => {
+        if (wsDisconnectedAt && Date.now() - wsDisconnectedAt >= 29_000) {
+          if (radios) radios.classList.add('degraded');
+          if (hint) hint.classList.add('visible');
+        }
+      }, 30_000);
+    }
+  });
+
+  listen<string>('market-spy-result', (event) => {
+    const statusEl = document.getElementById('market-login-status');
+    if (statusEl) {
+      statusEl.textContent = event.payload;
+      statusEl.className = 'login-status';
+    }
+  });
+
+  listen<string>('market-login-phase', (event) => {
+    const phaseEl = document.getElementById('login-phase');
+    if (phaseEl) phaseEl.textContent = event.payload;
+  });
+
+  // Init auth on startup (WS listeners are already registered above).
   initMarketAuth();
 
-  // Auth chip → open login modal.
-  document.getElementById('market-auth-chip')!.addEventListener('click', () => {
+  // ── Auth event listeners ─────────────────────────────────────────
+
+  // Close dropdown when clicking outside.
+  document.addEventListener('click', (e) => {
+    const dd = document.getElementById('auth-dropdown')!;
+    const chip = document.getElementById('market-auth-chip')!;
+    if (!dd.classList.contains('hidden') && !dd.contains(e.target as Node) && e.target !== chip) {
+      closeAuthDropdown();
+    }
+  });
+
+  // Auth chip → toggle dropdown (logged in) or open modal (not logged in).
+  document.getElementById('market-auth-chip')!.addEventListener('click', (e) => {
+    e.stopPropagation();
     if (marketAuthName) {
-      // Logged in — show logout option.
-      const modal = document.getElementById('market-login-modal')!;
-      modal.classList.remove('hidden');
-      (document.getElementById('btn-market-login') as HTMLButtonElement).style.display = 'none';
-      (document.getElementById('btn-market-logout') as HTMLButtonElement).style.display = '';
-      (document.getElementById('market-login-status')!).textContent = '';
+      // Toggle dropdown.
+      const dd = document.getElementById('auth-dropdown')!;
+      dd.classList.toggle('hidden');
+      if (!dd.classList.contains('hidden')) updateAuthDropdown();
       return;
     }
     // Not logged in — show login form.
@@ -2006,9 +2112,23 @@ window.addEventListener('DOMContentLoaded', () => {
     modal.classList.remove('hidden');
     (document.getElementById('market-login-email') as HTMLInputElement).value = '';
     (document.getElementById('market-login-password') as HTMLInputElement).value = '';
-    (document.getElementById('market-login-status')!).textContent = '';
-    (document.getElementById('btn-market-login') as HTMLButtonElement).style.display = '';
-    (document.getElementById('btn-market-logout') as HTMLButtonElement).style.display = 'none';
+    const statusEl = document.getElementById('market-login-status')!;
+    statusEl.textContent = '';
+    statusEl.className = 'login-status';
+    document.getElementById('login-spinner')!.classList.add('hidden');
+    document.getElementById('login-phase')!.textContent = '';
+    document.getElementById('btn-market-logout')!.style.display = 'none';
+    document.getElementById('btn-market-login')!.style.display = '';
+    (document.getElementById('market-login-password') as HTMLInputElement).type = 'password';
+    (document.getElementById('btn-pass-toggle')!).textContent = '👁';
+  });
+
+  // Password toggle.
+  document.getElementById('btn-pass-toggle')!.addEventListener('click', () => {
+    const pw = document.getElementById('market-login-password') as HTMLInputElement;
+    const btn = document.getElementById('btn-pass-toggle')!;
+    if (pw.type === 'password') { pw.type = 'text'; btn.textContent = '🙈'; }
+    else { pw.type = 'password'; btn.textContent = '👁'; }
   });
 
   // Login modal — cancel
@@ -2016,50 +2136,73 @@ window.addEventListener('DOMContentLoaded', () => {
     document.getElementById('market-login-modal')!.classList.add('hidden');
   });
 
-  // Login modal — login
+  // Login modal — login (with spinner + phase text)
   document.getElementById('btn-market-login')!.addEventListener('click', async () => {
     const email = (document.getElementById('market-login-email') as HTMLInputElement).value.trim();
     const password = (document.getElementById('market-login-password') as HTMLInputElement).value;
     const statusEl = document.getElementById('market-login-status')!;
     const loginBtn = document.getElementById('btn-market-login') as HTMLButtonElement;
+    const spinner = document.getElementById('login-spinner')!;
+    const phaseEl = document.getElementById('login-phase')!;
 
+    statusEl.textContent = '';
+    statusEl.className = 'login-status';
     if (!email || !email.includes('@')) {
       statusEl.textContent = '请输入有效的邮箱地址';
+      statusEl.className = 'login-status error';
       return;
     }
     if (!password) {
       statusEl.textContent = '请输入密码';
+      statusEl.className = 'login-status error';
       return;
     }
 
-    statusEl.textContent = '登录中…';
     loginBtn.disabled = true;
+    spinner.classList.remove('hidden');
+    phaseEl.textContent = '获取安全令牌…';
 
     try {
       const result = await marketInvoke<MarketAuthStatus>('market_signin', { email, password });
       marketAuthName = result.ingame_name;
+      marketAuthAvatar = result.avatar ?? null;
+      marketAuthStatus = result.current_status ?? null;
+      marketAuthRep = result.reputation ?? null;
       updateAuthChip();
       document.getElementById('market-login-modal')!.classList.add('hidden');
       await refreshMyOrders();
     } catch (err: any) {
       if (err?.code === 'auth_expired') { handleAuthExpired(); return; }
       statusEl.textContent = err?.message || '登录失败';
+      statusEl.className = 'login-status error';
     } finally {
       loginBtn.disabled = false;
+      spinner.classList.add('hidden');
+      phaseEl.textContent = '';
     }
   });
 
-  // Login modal — logout
-  document.getElementById('btn-market-logout')!.addEventListener('click', async () => {
-    const statusEl = document.getElementById('market-login-status')!;
-    statusEl.textContent = '登出中…';
+  // Dropdown logout.
+  document.getElementById('btn-auth-logout')!.addEventListener('click', async () => {
     try {
       await marketInvoke<void>('market_signout');
       handleAuthExpired();
-      document.getElementById('market-login-modal')!.classList.add('hidden');
+      closeAuthDropdown();
     } catch (err: any) {
-      statusEl.textContent = err?.message || '登出失败';
+      // Silently clear local state even if API call fails.
+      handleAuthExpired();
+      closeAuthDropdown();
     }
+  });
+
+  // Status radio buttons in dropdown.
+  document.getElementById('auth-status-radios')!.addEventListener('change', async (e) => {
+    const target = e.target as HTMLInputElement;
+    if (target.name !== 'wm-status') return;
+    try {
+      await marketInvoke<void>('market_set_status', { status: target.value });
+      marketAuthStatus = target.value; // optimistically update local
+    } catch (_) {}
   });
 
   // My orders panel — refresh on expand

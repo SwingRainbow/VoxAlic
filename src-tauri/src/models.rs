@@ -249,6 +249,12 @@ pub struct MarketError {
 pub struct MarketAuthStatus {
     pub logged_in: bool,
     pub ingame_name: Option<String>,
+    #[serde(default)]
+    pub avatar: Option<String>,
+    #[serde(default)]
+    pub reputation: Option<i32>,
+    #[serde(default)]
+    pub current_status: Option<String>,
 }
 
 /// Request body for creating a profile order.

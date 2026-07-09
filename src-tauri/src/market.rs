@@ -17,7 +17,7 @@ use crate::models::{MarketItemSummary, MarketOrder, MarketItemFull, MarketCacheS
 
 const ICON_BASE: &str = "https://warframe.market/static/assets/";
 const ITEMS_URL: &str = "https://api.warframe.market/v2/items";
-const MARKET_API_BASE: &str = "https://api.warframe.market/v2";
+pub(crate) const MARKET_API_BASE: &str = "https://api.warframe.market/v2";
 const FILE_NAME: &str = "market_items.json";
 
 // ── Shared HTTP client (reused — TLS / DNS overhead paid once) ──────────────
@@ -47,6 +47,8 @@ pub struct MarketCachedItem {
     pub mr: Option<u8>,
     #[serde(default)]
     pub max_rank: Option<u8>, // max mod/arcane rank
+    #[serde(default)]
+    pub bulk_tradable: bool,  // supports perTrade (e.g. relics, arcanes)
     pub tags: Vec<String>,
 }
 
@@ -97,6 +99,7 @@ fn ci(slug: &str, name: &str, icon: &str, mr: Option<u8>, max_rank: Option<u8>, 
         icon: icon.into(),
         mr,
         max_rank,
+        bulk_tradable: false,
         tags: tags.iter().map(|s| s.to_string()).collect(),
     }
 }
@@ -499,6 +502,7 @@ pub async fn refresh_market_cache(
                 .to_string();
             let mr = v["reqMasteryRank"].as_u64().map(|v| v as u8);
             let max_rank = v["maxRank"].as_u64().map(|v| v as u8);
+            let bulk_tradable = v["bulkTradable"].as_bool().unwrap_or(false);
             let tags: Vec<String> = v["tags"]
                 .as_array()
                 .map(|a| a.iter().filter_map(|t| t.as_str().map(String::from)).collect())
@@ -507,7 +511,7 @@ pub async fn refresh_market_cache(
                 .as_str()
                 .unwrap_or_else(|| v["i18n"]["en"]["name"].as_str().unwrap_or(&slug))
                 .to_string();
-            MarketCachedItem { id, slug, name, name_zh, icon, mr, max_rank, tags }
+            MarketCachedItem { id, slug, name, name_zh, icon, mr, max_rank, bulk_tradable, tags }
         })
         .collect();
 
