@@ -141,7 +141,7 @@ jobs:
           # 2) Mirror code + Gitee latest.json + tag to Gitee master (force; CI is sole writer).
           git config user.email "ci@voxalic"
           git config user.name "VoxAlic CI"
-          git add latest.json
+          git add -f latest.json
           git commit -m "chore: gitee latest.json v$v"
           $giteeUrl = "https://${owner}:${env:GITEE_TOKEN}@gitee.com/$owner/$repo.git"
           git push --force $giteeUrl HEAD:master
