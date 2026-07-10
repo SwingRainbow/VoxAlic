@@ -373,6 +373,20 @@ body {
   font-weight: 600;
   color: #dcccf2;
 }
+.baro-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #1a0e00;
+  padding: 2px 7px;
+  border-radius: 10px;
+  margin-left: 6px;
+  vertical-align: middle;
+  background: linear-gradient(135deg, #f4c542 0%, #e8a820 50%, #d4941a 100%);
+  box-shadow: 0 0 6px rgba(244, 197, 66, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.2);
+  text-transform: uppercase;
+}
 .baro-loc {
   font-size: 11px;
   color: #9a8ab0;
@@ -1878,3 +1892,65 @@ tr.expiring td:last-child { color: var(--warn); font-weight: bold; }
   padding: 4px 0;
 }
 .market-register-link:hover { color: var(--accent); text-decoration: underline; }
+
+/* ── My-orders row states ────────────────────────────────────────────────── */
+
+.my-order-row.hidden {
+  opacity: 0.45;
+}
+.my-order-row.hidden .my-order-name {
+  text-decoration: line-through;
+}
+
+.my-order-row.pending {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+/* +/- quantity buttons */
+.btn-qty {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface-2);
+  color: var(--dim);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-qty:hover:not(:disabled) { color: var(--text); border-color: var(--dim); }
+.btn-qty:disabled { opacity: 0.3; cursor: default; }
+
+/* Inline edit form inside my-orders list */
+.my-order-edit-form {
+  margin: 4px 0 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--accent-dim);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+/* Inline error message below a failed order row */
+.my-order-error {
+  font-size: 11px;
+  color: var(--warn);
+  padding: 2px 0 6px 0;
+  margin-bottom: 4px;
+}
+
+/* Flash-red animation for failed mutations */
+@keyframes flash-red {
+  0%   { box-shadow: 0 0 0 0 rgba(255, 80, 80, 0.5); }
+  50%  { box-shadow: 0 0 0 3px rgba(255, 80, 80, 0.3); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 80, 80, 0); }
+}
+.my-order-row.flash-error {
+  animation: flash-red 0.6s ease-out;
+  border-radius: 4px;
+}

@@ -25,9 +25,16 @@ const FILE_NAME: &str = "market_items.json";
 pub(crate) fn market_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+        let real_ips: Vec<SocketAddr> = [
+            "104.26.0.182", "104.26.1.182", "172.67.75.162",
+        ].iter().map(|ip| SocketAddr::new(IpAddr::V4(ip.parse::<Ipv4Addr>().unwrap()), 443)).collect();
+
         reqwest::Client::builder()
             .user_agent("VoxAlic/1.0")
             .timeout(std::time::Duration::from_secs(30))
+            .resolve_to_addrs("warframe.market", &real_ips)
+            .resolve_to_addrs("api.warframe.market", &real_ips)
             .build()
             .expect("reqwest::Client::build")
     })

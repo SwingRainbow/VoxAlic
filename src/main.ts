@@ -93,6 +93,7 @@ interface BaroItem {
 interface BaroInfo {
   active: boolean;
   location: string;
+  tag: string;       // "" = regular, "TennoCon" = TennoCon special
   start_ms: number;
   end_ms: number;
   remain_ms: number;
@@ -169,7 +170,7 @@ interface AppStatePayload {
   last_update: string;
   countdown_secs: number;
   mission_timer: MissionTimerPayload;
-  baro: BaroInfo | null;
+  baro: BaroInfo[];
   bounties: BountyInfo[];
   circuit: CircuitInfo | null;
   arbitration: ArbitrationInfo | null;
@@ -241,14 +242,6 @@ interface CreateOrderRequest {
   visible: boolean;
 }
 
-interface UpdateOrderRequest {
-  order_id: string;
-  platinum?: number;
-  quantity?: number;
-  visible?: boolean;
-  rank?: number;
-}
-
 interface MarketCommandError {
   code: string;
   message: string;
@@ -291,7 +284,7 @@ let openBounty: string | null = null;
 // Whether the Duviri Circuit panel is open.
 let openCircuit = false;
 // Whether the Baro items table is expanded.
-let openBaro = false;
+let openBaro: string | null = null;  // location of the currently expanded Baro card (null = none)
 // Whether the Arbitration upcoming slots panel is expanded.
 let openArbitration = false;
 // The Duviri cycle card opens the Circuit panel instead of a bounty board.
@@ -314,6 +307,8 @@ let myOrders: ProfileOrder[] = [];              // own profile orders
 let myOrdersBySlug: Map<string, number> = new Map(); // slug → order count (fast lookup)
 let orderFormSlug: string | null = null;        // slug whose order form is open
 let orderFormSide: 'sell' | 'buy' = 'sell';     // which side the form is for
+let pendingOrderIds: Set<string> = new Set();    // per-row mutation lock
+let editingOrderId: string | null = null;         // singleton inline edit form
 
 /** Return the display name for an item based on current market language. */
 function marketName(item: { name: string; name_zh?: string }): string {
@@ -511,62 +506,82 @@ function renderCircuitPanel(circuit: CircuitInfo | null) {
   });
 }
 
-// Signature of the structural (non-countdown) parts of the Baro panel. The
-// per-second tick only changes the countdown, so we rebuild the panel DOM only
-// when this signature changes — otherwise we just patch the countdown text.
-// Rebuilding every tick would destroy the货物 table's scroll container and snap
-// the user's scrollbar back to the top.
-let baroSig = '';
+// Per-trader structural signatures to avoid DOM rebuild on every tick.
+const baroSigs = new Map<string, string>();
 
-function renderBaro(baro: BaroInfo | null) {
+function safeBaroId(location: string): string {
+  return location.replace(/[^a-zA-Z0-9一-鿿]/g, '_');
+}
+
+function renderBaro(baroList: BaroInfo[]) {
   const container = document.getElementById('baro-card')!;
-  if (!baro) { container.innerHTML = ''; baroSig = ''; return; }
+  if (!baroList.length) { container.innerHTML = ''; baroSigs.clear(); return; }
 
-  const sig = `${baro.active}|${baro.location}|${baro.items.length}|${openBaro}`;
-  const cdLabel = baro.active ? '离开倒计时' : '到达倒计时';
-
-  // Fast path: structure unchanged → only update the live countdown.
-  if (sig === baroSig) {
-    const cd = container.querySelector('.baro-countdown');
-    if (cd) cd.textContent = `${cdLabel} ${baro.remain_str}`;
-    return;
+  // Check whether any card's structure changed — if so, full rebuild.
+  let needsRebuild = baroList.length !== baroSigs.size;
+  if (!needsRebuild) {
+    for (const baro of baroList) {
+      const isOpen = openBaro === baro.location;
+      const sig = `${baro.active}|${baro.location}|${baro.items.length}|${isOpen}`;
+      if (sig !== baroSigs.get(baro.location)) { needsRebuild = true; break; }
+    }
   }
-  baroSig = sig;
 
-  if (baro.active) {
-    const rows = baro.items.map(it => `
-      <tr>
-        <td>${it.name}</td>
-        <td class="baro-ducats">${it.ducats > 0 ? it.ducats : '—'}</td>
-        <td class="baro-credits">${it.credits.toLocaleString()}</td>
-      </tr>
-    `).join('');
-    const tableHtml = openBaro ? `
-      <div class="baro-table-wrap">
-        <table class="baro-table">
-          <thead><tr><th>物品</th><th>杜卡德</th><th>现金</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>` : '';
-    container.innerHTML = `
-      <div class="baro-panel active clickable${openBaro ? ' open' : ''}">
-        <div class="baro-head">
-          <span class="baro-title">🛒 虚空商人 Baro Ki'Teer</span>
-          <span class="baro-loc">${baro.location}</span>
-          <span class="baro-countdown">${cdLabel} ${baro.remain_str}</span>
-        </div>
-        ${tableHtml}
-      </div>`;
-  } else {
-    container.innerHTML = `
-      <div class="baro-panel waiting">
-        <div class="baro-head">
-          <span class="baro-title">🛒 虚空商人 Baro Ki'Teer</span>
-          <span class="baro-loc">${baro.location}</span>
-          <span class="baro-countdown">${cdLabel} ${baro.remain_str}</span>
-        </div>
-        <div class="baro-wait-note">尚未到达，到达后可点击展开货物清单</div>
-      </div>`;
+  if (needsRebuild) {
+    baroSigs.clear();
+    let html = '';
+    for (const baro of baroList) {
+      const cdLabel = baro.active ? '离开倒计时' : '到达倒计时';
+      const isOpen = openBaro === baro.location;
+      const sig = `${baro.active}|${baro.location}|${baro.items.length}|${isOpen}`;
+      baroSigs.set(baro.location, sig);
+      const badge = baro.tag ? ` <span class="baro-badge">${baro.tag}</span>` : '';
+      const cdId = safeBaroId(baro.location);
+
+      if (baro.active) {
+        const rows = baro.items.map(it => `
+          <tr>
+            <td>${it.name}</td>
+            <td class="baro-ducats">${it.ducats > 0 ? it.ducats : '—'}</td>
+            <td class="baro-credits">${it.credits.toLocaleString()}</td>
+          </tr>
+        `).join('');
+        const tableHtml = isOpen ? `
+          <div class="baro-table-wrap">
+            <table class="baro-table">
+              <thead><tr><th>物品</th><th>杜卡德</th><th>现金</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>` : '';
+        html += `
+        <div class="baro-panel active clickable${isOpen ? ' open' : ''}" data-baro-loc="${baro.location}">
+          <div class="baro-head">
+            <span class="baro-title">🛒 虚空商人 Baro Ki'Teer${badge}</span>
+            <span class="baro-loc">${baro.location}</span>
+            <span class="baro-countdown" id="baro-cd-${cdId}">${cdLabel} ${baro.remain_str}</span>
+          </div>
+          ${tableHtml}
+        </div>`;
+      } else {
+        html += `
+        <div class="baro-panel waiting" data-baro-loc="${baro.location}">
+          <div class="baro-head">
+            <span class="baro-title">🛒 虚空商人 Baro Ki'Teer${badge}</span>
+            <span class="baro-loc">${baro.location}</span>
+            <span class="baro-countdown" id="baro-cd-${cdId}">${cdLabel} ${baro.remain_str}</span>
+          </div>
+          <div class="baro-wait-note">尚未到达，到达后可点击展开货物清单</div>
+        </div>`;
+      }
+    }
+    container.innerHTML = html;
+  }
+
+  // Always patch countdown text in-place (no DOM rebuild — fast, no flicker).
+  for (const baro of baroList) {
+    const cdLabel = baro.active ? '离开倒计时' : '到达倒计时';
+    const cd = document.getElementById(`baro-cd-${safeBaroId(baro.location)}`);
+    if (cd) cd.textContent = `${cdLabel} ${baro.remain_str}`;
   }
 }
 
@@ -1025,31 +1040,6 @@ function renderMarketDetail(data: MarketItemFull) {
     </div>
     <button class="btn-backtop" id="btn-market-backtop" onclick="document.getElementById('tab-market').scrollTop=0" title="回到顶部">⬆</button>`;
 
-  (window as any)._copyWhisper = copyWhisper;
-  (window as any)._openSetPart = (slug: string) => openMarketItem(slug);
-  (window as any)._showOrderForm = (slug: string, side: 'sell' | 'buy') => renderOrderForm(slug, side);
-  (window as any)._editMyOrder = (orderId: string) => handleEditOrder(orderId);
-  (window as any)._deleteMyOrder = (orderId: string) => handleDeleteOrder(orderId);
-  (window as any)._openMarketItem = (slug: string) => openMarketItem(slug);
-  (window as any)._sortMarket = (side: 'sell' | 'buy', key: SortKey) => {
-    const sort = side === 'sell' ? _lazySellSort : _lazyBuySort;
-    if (sort.key === key) {
-      sort.dir = sort.dir === 'asc' ? 'desc' : 'asc';
-    } else {
-      sort.key = key;
-      sort.dir = key === 'price' ? (side === 'sell' ? 'asc' : 'desc') : 'asc';
-    }
-    // Update sort control labels
-    const sideEl = document.getElementById(side === 'sell' ? 'sell-tbody' : 'buy-tbody')?.closest('.market-order-side');
-    if (sideEl) {
-      const ctrls = sideEl.querySelector('.sort-controls');
-      if (ctrls) {
-        ctrls.innerHTML = `${sortCtrlHTML(side, 'price', '价格')} ${sortCtrlHTML(side, 'status', '状态')}`;
-      }
-    }
-    reloadOrderSide(side);
-  };
-
   // Bind order-form buttons if form is present.
   const submitBtn = document.getElementById('btn-order-submit');
   const cancelBtn = document.getElementById('btn-order-cancel');
@@ -1159,13 +1149,246 @@ async function refreshMyOrders() {
     myOrders = await marketInvoke<ProfileOrder[]>('market_list_orders');
   } catch (err: any) {
     if (err?.code === 'auth_expired') { handleAuthExpired(); return; }
-    myOrders = [];
+    console.warn('refreshMyOrders failed:', err?.message || err);
+    return; // keep existing data — never wipe on transient errors
   }
   // Rebuild slug→count map
   myOrdersBySlug.clear();
   for (const o of myOrders) {
     const slug = o.item_slug || o.item_id;
     myOrdersBySlug.set(slug, (myOrdersBySlug.get(slug) || 0) + 1);
+  }
+  renderMyOrders();
+}
+
+// ── Order mutation helpers ─────────────────────────────────────────────────
+
+/** Flash a red border on an order row to signal a failed mutation. */
+function flashErrorRow(orderId: string) {
+  const rows = document.querySelectorAll<HTMLElement>('.my-order-row');
+  const row = Array.from(rows).find(r => r.dataset.orderId === orderId);
+  if (!row) return;
+  row.classList.add('flash-error');
+  setTimeout(() => row.classList.remove('flash-error'), 900);
+}
+
+/** Show an inline error message below an order row for 3s. */
+function showOrderError(orderId: string, msg: string) {
+  const prev = document.getElementById(`order-err-${orderId}`);
+  if (prev) prev.remove();
+  const rows = document.querySelectorAll<HTMLElement>('.my-order-row');
+  const row = Array.from(rows).find(r => r.dataset.orderId === orderId);
+  if (!row) return;
+  const err = document.createElement('div');
+  err.id = `order-err-${orderId}`;
+  err.className = 'my-order-error';
+  err.textContent = msg;
+  row.insertAdjacentElement('afterend', err);
+  setTimeout(() => { err.remove(); }, 3000);
+}
+
+/** Close the inline edit form (if any) and clear singleton state. */
+function cancelEdit() {
+  if (editingOrderId) {
+    editingOrderId = null;
+    renderMyOrders();
+  }
+}
+
+// ESC key closes the edit form.
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && editingOrderId) {
+    cancelEdit();
+  }
+});
+
+/** Core mutation wrapper: optimistic apply → API call → canonical update / rollback. */
+async function orderMutate(
+  orderId: string,
+  idx: number,
+  apply: () => void,
+  invoke: () => Promise<ProfileOrder | void>,
+  rollback: () => void,
+) {
+  if (pendingOrderIds.has(orderId)) return;
+  pendingOrderIds.add(orderId);
+  apply();
+  renderMyOrders();
+  try {
+    const result = await invoke();
+    // Write the server response back — PATCH returns the full updated order.
+    // DELETE returns void, so result is falsy and we skip (optimistic removal stands).
+    if (result) {
+      myOrders[idx] = result;
+      // Rebuild slug map in case an order was replaced (relist changes the id).
+      myOrdersBySlug.clear();
+      for (const o of myOrders) {
+        const s = o.item_slug || o.item_id;
+        myOrdersBySlug.set(s, (myOrdersBySlug.get(s) || 0) + 1);
+      }
+    }
+  } catch (err: any) {
+    if (err?.code === 'auth_expired') { handleAuthExpired(); return; }
+    rollback();
+    flashErrorRow(orderId);
+    showOrderError(orderId, err?.message || '操作失败');
+  } finally {
+    pendingOrderIds.delete(orderId);
+    renderMyOrders(); // always re-render — the lock was just released
+  }
+}
+
+/** +1 / Sold (-1): increment quantity, delete when reaching 0. */
+async function handleIncrement(orderId: string, delta: number) {
+  if (pendingOrderIds.has(orderId) || editingOrderId) return;
+  const idx = myOrders.findIndex(o => o.id === orderId);
+  if (idx === -1) return;
+  const prev = { ...myOrders[idx] };
+  const newQty = prev.quantity + delta;
+
+  if (newQty < 1) {
+    if (!confirm(`数量归零，删除此订单？\n${prev.item_name} — ${prev.platinum}p`)) return;
+    await orderMutate(orderId, idx,
+      () => {
+        myOrders.splice(idx, 1);
+        const slug = prev.item_slug;
+        myOrdersBySlug.set(slug, Math.max(0, (myOrdersBySlug.get(slug) || 1) - 1));
+      },
+      () => marketInvoke('market_delete_order', { orderId }),
+      () => {
+        myOrders.splice(idx, 0, prev);
+        const slug = prev.item_slug;
+        myOrdersBySlug.set(slug, (myOrdersBySlug.get(slug) || 0) + 1);
+      },
+    );
+    return;
+  }
+  if (newQty > 100) return;
+
+  await orderMutate(orderId, idx,
+    () => { myOrders[idx].quantity = newQty; },
+    () => marketInvoke<ProfileOrder>('market_update_order', { req: { order_id: orderId, quantity: newQty } }),
+    () => { myOrders[idx] = prev; },
+  );
+}
+
+/** Re-list a hidden order: DELETE old → POST new with visible:true.
+ * Used when PATCH {visible:true} is rejected (WM may treat visible=false as close). */
+async function relistOrder(order: ProfileOrder, idx: number) {
+  const orderId = order.id;
+  if (pendingOrderIds.has(orderId)) return;
+  pendingOrderIds.add(orderId);
+
+  // Optimistic: remove old order, rebuild slug map.
+  const slug = order.item_slug || order.item_id;
+  myOrders.splice(idx, 1);
+  myOrdersBySlug.set(slug, Math.max(0, (myOrdersBySlug.get(slug) || 1) - 1));
+  renderMyOrders();
+
+  try {
+    // 1) Delete the hidden order.
+    await marketInvoke<void>('market_delete_order', { orderId });
+
+    // 2) Create a fresh one with visible: true (new id assigned by server).
+    const created = await marketInvoke<ProfileOrder>('market_create_order', {
+      req: {
+        item_id: order.item_slug || order.item_id,
+        order_type: order.order_type,
+        platinum: order.platinum,
+        quantity: order.quantity,
+        rank: order.rank,
+        visible: true,
+      },
+    });
+
+    // 3) Insert the new order at the same position.
+    myOrders.splice(idx, 0, created);
+    myOrdersBySlug.set(slug, (myOrdersBySlug.get(slug) || 0) + 1);
+  } catch (err: any) {
+    if (err?.code === 'auth_expired') { handleAuthExpired(); return; }
+    // Rollback: restore old order at original position.
+    myOrders.splice(idx, 0, order);
+    myOrdersBySlug.set(slug, (myOrdersBySlug.get(slug) || 0) + 1);
+    flashErrorRow(orderId);
+    showOrderError(orderId, err?.message || '恢复显示失败');
+  } finally {
+    pendingOrderIds.delete(orderId);
+    renderMyOrders(); // always re-render — the lock was just released
+  }
+}
+
+/** Toggle visible on/off. Hide uses PATCH; show uses DELETE+POST (relist)
+ * because the WM API may treat visible=false as an irreversible close. */
+async function handleToggleVisible(orderId: string) {
+  if (pendingOrderIds.has(orderId) || editingOrderId) return;
+  const idx = myOrders.findIndex(o => o.id === orderId);
+  if (idx === -1) return;
+  const order = myOrders[idx];
+  const newVis = !order.visible;
+
+  if (newVis) {
+    // Show: DELETE old + POST new (visible: true).
+    await relistOrder(order, idx);
+    return;
+  }
+
+  // Hide: PATCH {visible: false} (one round trip).
+  const prev = { ...order };
+  await orderMutate(orderId, idx,
+    () => { myOrders[idx].visible = false; },
+    () => marketInvoke<ProfileOrder>('market_update_order', { req: { order_id: orderId, visible: false } }),
+    () => { myOrders[idx] = prev; },
+  );
+}
+
+/** Submit the inline edit form. */
+async function handleSubmitEdit(orderId: string) {
+  if (pendingOrderIds.has(orderId)) return;
+  const idx = myOrders.findIndex(o => o.id === orderId);
+  if (idx === -1) return;
+  const prev = { ...myOrders[idx] };
+
+  const priceInput = document.getElementById('edit-form-price') as HTMLInputElement;
+  const qtyInput = document.getElementById('edit-form-qty') as HTMLInputElement;
+  const visibleCb = document.getElementById('edit-form-visible') as HTMLInputElement;
+  const rankEl = document.getElementById('edit-form-rank') as HTMLInputElement | null;
+
+  const platinum = parseInt(priceInput?.value || '0', 10);
+  const quantity = parseInt(qtyInput?.value || '0', 10);
+  const visible = visibleCb?.checked ?? true;
+  const rank = rankEl ? parseInt(rankEl.value, 10) : 0;
+
+  if (platinum < 1 || platinum > 999999) {
+    showOrderError(orderId, '价格必须在 1 ～ 999,999 之间');
+    return;
+  }
+  if (quantity < 1 || quantity > 100) {
+    showOrderError(orderId, '数量必须在 1 ～ 100 之间');
+    return;
+  }
+
+  await orderMutate(orderId, idx,
+    () => {
+      Object.assign(myOrders[idx], { platinum, quantity, visible, rank });
+      editingOrderId = null;
+    },
+    () => marketInvoke<ProfileOrder>('market_update_order', {
+      req: { order_id: orderId, platinum, quantity, visible, rank },
+    }),
+    () => {
+      Object.assign(myOrders[idx], prev);
+      editingOrderId = null;
+    },
+  );
+}
+
+/** Toggle the inline edit form for an order (singleton: closes any other). */
+function handleEditOrder(orderId: string) {
+  if (pendingOrderIds.has(orderId)) return;
+  if (editingOrderId === orderId) {
+    editingOrderId = null;
+  } else {
+    editingOrderId = orderId;
   }
   renderMyOrders();
 }
@@ -1183,18 +1406,51 @@ function renderMyOrders() {
   listEl.innerHTML = myOrders.map(o => {
     const sideCls = o.order_type === 'sell' ? 'sell' : 'buy';
     const sideLabel = o.order_type === 'sell' ? '卖' : '买';
-    const visLabel = o.visible ? '' : ' 🔒';
-    return `<div class="my-order-row">
+    const hidden = !o.visible;
+    const pending = pendingOrderIds.has(o.id);
+    const atMax = o.quantity >= 100;
+    const atMin = o.quantity <= 1;
+    const slug = o.item_slug || o.item_id;
+    const eyeIcon = o.visible ? '👁' : '👁‍🗨';
+    const eyeTitle = o.visible ? '点击隐藏' : '点击显示';
+    const editFormHtml = editingOrderId === o.id ? editOrderFormHTML(o) : '';
+    return `
+    <div class="my-order-row${hidden ? ' hidden' : ''}${pending ? ' pending' : ''}" data-order-id="${o.id}">
       <span class="my-order-type ${sideCls}">${sideLabel}</span>
-      <span class="my-order-name" onclick="window._openMarketItem('${o.item_slug || o.item_id}')" title="${o.item_name}">${o.item_name}</span>
+      <span class="my-order-name" onclick="window._openMarketItem('${slug}')" title="${o.item_name}">${o.item_name}</span>
       <span class="my-order-price">${o.platinum}p</span>
-      <span class="my-order-meta">×${o.quantity}${visLabel}</span>
+      <button class="btn-qty" ${pending || atMin ? 'disabled' : ''} onclick="window._incQty('${o.id}', -1)" title="Sold / 卖出一个">−</button>
+      <span class="my-order-meta">×${o.quantity}</span>
+      <button class="btn-qty" ${pending || atMax ? 'disabled' : ''} onclick="window._incQty('${o.id}', 1)" title="+1 数量">+</button>
       <span class="my-order-actions">
-        <button onclick="window._editMyOrder('${o.id}')" title="编辑">✎</button>
-        <button class="btn-order-delete" onclick="window._deleteMyOrder('${o.id}')" title="删除">✕</button>
+        <button ${pending ? 'disabled' : ''} onclick="window._toggleVisible('${o.id}')" title="${eyeTitle}">${eyeIcon}</button>
+        <button ${pending ? 'disabled' : ''} onclick="window._editMyOrder('${o.id}')" title="编辑">✎</button>
+        <button class="btn-order-delete" ${pending ? 'disabled' : ''} onclick="window._deleteMyOrder('${o.id}')" title="删除">✕</button>
       </span>
-    </div>`;
+    </div>${editFormHtml}`;
   }).join('');
+}
+
+/** Compact inline edit form rendered below an order row in the my-orders list. */
+function editOrderFormHTML(order: ProfileOrder): string {
+  const sideLabel = order.order_type === 'sell' ? '卖' : '买';
+  return `
+    <div class="my-order-edit-form" id="order-edit-${order.id}">
+      <div class="market-order-form-title">编辑${sideLabel}单: ${order.item_name}</div>
+      <div class="market-order-form-row">
+        <label>价格 <input type="number" id="edit-form-price" min="1" max="999999" value="${order.platinum}" /></label>
+        <label>数量 <input type="number" id="edit-form-qty" min="1" max="100" value="${order.quantity}" /></label>
+        <label>等级 <input type="number" id="edit-form-rank" min="0" max="99" value="${order.rank}" style="width:50px" /></label>
+        <label class="market-order-form-toggle">
+          <input type="checkbox" id="edit-form-visible" ${order.visible ? 'checked' : ''} /> 公开可见
+        </label>
+      </div>
+      <div class="market-order-form-actions">
+        <button class="timer-btn-sm" onclick="window._submitEdit('${order.id}')">确认修改</button>
+        <button class="timer-btn-sm" onclick="window._cancelEdit()">取消</button>
+        <span class="market-order-form-status" id="edit-form-status"></span>
+      </div>
+    </div>`;
 }
 
 function renderOrderForm(slug: string, side: 'sell' | 'buy') {
@@ -1328,49 +1584,26 @@ async function handleCreateOrder() {
   }
 }
 
-async function handleEditOrder(orderId: string) {
-  const order = myOrders.find(o => o.id === orderId);
-  if (!order) return;
-
-  const newPriceStr = prompt(`修改价格 (当前 ${order.platinum}p):`, String(order.platinum));
-  if (newPriceStr === null) return;
-  const newPrice = parseInt(newPriceStr, 10);
-  if (isNaN(newPrice) || newPrice < 1 || newPrice > 999999) { alert('价格无效'); return; }
-
-  const newQtyStr = prompt(`修改数量 (当前 ${order.quantity}):`, String(order.quantity));
-  if (newQtyStr === null) return;
-  const newQty = parseInt(newQtyStr, 10);
-  if (isNaN(newQty) || newQty < 1 || newQty > 100) { alert('数量无效'); return; }
-
-  try {
-    await marketInvoke<ProfileOrder>('market_update_order', {
-      req: {
-        order_id: order.id,
-        platinum: newPrice,
-        quantity: newQty,
-        visible: order.visible,
-        rank: order.rank,
-      } as UpdateOrderRequest,
-    });
-    await refreshMyOrders();
-  } catch (err: any) {
-    if (err?.code === 'auth_expired') { handleAuthExpired(); return; }
-    alert(err?.message || '修改失败');
-  }
-}
-
 async function handleDeleteOrder(orderId: string) {
-  const order = myOrders.find(o => o.id === orderId);
-  if (!order) return;
+  if (pendingOrderIds.has(orderId) || editingOrderId) return;
+  const idx = myOrders.findIndex(o => o.id === orderId);
+  if (idx === -1) return;
+  const order = myOrders[idx];
   if (!confirm(`确定删除此订单？\n${order.item_name} — ${order.platinum}p ×${order.quantity}`)) return;
-
-  try {
-    await marketInvoke<void>('market_delete_order', { orderId });
-    await refreshMyOrders();
-  } catch (err: any) {
-    if (err?.code === 'auth_expired') { handleAuthExpired(); return; }
-    alert(err?.message || '删除失败');
-  }
+  const prev = { ...order };
+  await orderMutate(orderId, idx,
+    () => {
+      myOrders.splice(idx, 1);
+      const slug = prev.item_slug;
+      myOrdersBySlug.set(slug, Math.max(0, (myOrdersBySlug.get(slug) || 1) - 1));
+    },
+    () => marketInvoke<void>('market_delete_order', { orderId }),
+    () => {
+      myOrders.splice(idx, 0, prev);
+      const slug = prev.item_slug;
+      myOrdersBySlug.set(slug, (myOrdersBySlug.get(slug) || 0) + 1);
+    },
+  );
 }
 
 // ── Market search & interaction ──
@@ -1906,12 +2139,16 @@ window.addEventListener('DOMContentLoaded', () => {
       });
   });
 
-  // Baro card: click to expand/collapse items table (only when active)
-  document.getElementById('baro-card')!.addEventListener('click', () => {
-    if (currentData?.baro?.active) {
-      openBaro = !openBaro;
-      renderBaro(currentData.baro);
-    }
+  // Baro cards: click to expand/collapse items table (only when active).
+  document.getElementById('baro-card')!.addEventListener('click', (e) => {
+    const panel = (e.target as HTMLElement).closest('.baro-panel') as HTMLElement | null;
+    if (!panel) return;
+    const loc = panel.dataset.baroLoc;
+    if (!loc) return;
+    const baro = (currentData?.baro ?? []).find(b => b.location === loc);
+    if (!baro?.active) return;
+    openBaro = openBaro === loc ? null : loc;
+    renderBaro(currentData!.baro);
   });
 
   // Arbitration card: click to expand/collapse upcoming slots
@@ -2084,6 +2321,38 @@ window.addEventListener('DOMContentLoaded', () => {
   });
 
   // Init auth on startup (WS listeners are already registered above).
+
+  // ── Register window._ handlers ONCE (they were previously inside
+  //     renderMarketDetail, so they didn't exist until an item was opened).
+  (window as any)._copyWhisper = copyWhisper;
+  (window as any)._openSetPart = (slug: string) => openMarketItem(slug);
+  (window as any)._showOrderForm = (slug: string, side: 'sell' | 'buy') => renderOrderForm(slug, side);
+  (window as any)._editMyOrder = (orderId: string) => handleEditOrder(orderId);
+  (window as any)._deleteMyOrder = (orderId: string) => handleDeleteOrder(orderId);
+  (window as any)._openMarketItem = (slug: string) => openMarketItem(slug);
+  (window as any)._incQty = (orderId: string, delta: number) => handleIncrement(orderId, delta);
+  (window as any)._toggleVisible = (orderId: string) => handleToggleVisible(orderId);
+  (window as any)._submitEdit = (orderId: string) => handleSubmitEdit(orderId);
+  (window as any)._cancelEdit = () => cancelEdit();
+  (window as any)._sortMarket = (side: 'sell' | 'buy', key: SortKey) => {
+    const sort = side === 'sell' ? _lazySellSort : _lazyBuySort;
+    if (sort.key === key) {
+      sort.dir = sort.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      sort.key = key;
+      sort.dir = key === 'price' ? (side === 'sell' ? 'asc' : 'desc') : 'asc';
+    }
+    // Update sort control labels.
+    const sideEl = document.getElementById(side === 'sell' ? 'sell-tbody' : 'buy-tbody')?.closest('.market-order-side');
+    if (sideEl) {
+      const ctrls = sideEl.querySelector('.sort-controls');
+      if (ctrls) {
+        ctrls.innerHTML = `${sortCtrlHTML(side, 'price', '价格')} ${sortCtrlHTML(side, 'status', '状态')}`;
+      }
+    }
+    reloadOrderSide(side);
+  };
+
   initMarketAuth();
 
   // ── Auth event listeners ─────────────────────────────────────────

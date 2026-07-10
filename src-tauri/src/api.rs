@@ -1549,49 +1549,66 @@ pub fn parse_bounties(data: &Value) -> Vec<BountyInfo> {
 
 /// Parse the first Void Trader (Baro) entry into a `BaroInfo`.
 /// Returns `None` when the section is absent.
-pub fn parse_void_trader(data: &Value) -> Option<BaroInfo> {
-    let trader = data["VoidTraders"].as_array()?.first()?;
-    let now = now_ms();
-    let start = get_ms(&trader["Activation"]);
-    let end = get_ms(&trader["Expiry"]);
-    let active = start <= now && now < end;
-
-    let node_key = trader["Node"].as_str().unwrap_or("");
-    let info = node_lookup(node_key);
-    let location = if info.name.is_empty() {
-        node_key.to_string()
-    } else {
-        format!("{} / {}", info.name, info.planet)
+pub fn parse_void_trader(data: &Value) -> Vec<BaroInfo> {
+    let traders = match data["VoidTraders"].as_array() {
+        Some(arr) => arr,
+        None => return Vec::new(),
     };
+    let now = now_ms();
+    let mut result = Vec::with_capacity(traders.len());
 
-    // Manifest is only populated while Baro is present.
-    let mut items = Vec::new();
-    if active {
-        if let Some(manifest) = trader["Manifest"].as_array() {
-            for it in manifest {
-                let path = it["ItemType"].as_str().unwrap_or("");
-                let name = crate::item_i18n::translate(path)
-                    .unwrap_or_else(|| name_from_path(path));
-                items.push(BaroItem {
-                    name,
-                    ducats: it["PrimePrice"].as_i64().unwrap_or(0),
-                    credits: it["RegularPrice"].as_i64().unwrap_or(0),
-                });
+    for trader in traders {
+        let start = get_ms(&trader["Activation"]);
+        let end = get_ms(&trader["Expiry"]);
+        let active = start <= now && now < end;
+
+        let node_key = trader["Node"].as_str().unwrap_or("");
+        let info = node_lookup(node_key);
+        let location = if info.name.is_empty() {
+            node_key.to_string()
+        } else {
+            format!("{} / {}", info.name, info.planet)
+        };
+
+        // Tag: TennoCon special trader gets a badge; regular has empty tag.
+        let tag = if node_key == "TennoConHUB2" {
+            "TennoCon".to_string()
+        } else {
+            String::new()
+        };
+
+        // Manifest is only populated while Baro is present.
+        let mut items = Vec::new();
+        if active {
+            if let Some(manifest) = trader["Manifest"].as_array() {
+                for it in manifest {
+                    let path = it["ItemType"].as_str().unwrap_or("");
+                    let name = crate::item_i18n::translate(path)
+                        .unwrap_or_else(|| name_from_path(path));
+                    items.push(BaroItem {
+                        name,
+                        ducats: it["PrimePrice"].as_i64().unwrap_or(0),
+                        credits: it["RegularPrice"].as_i64().unwrap_or(0),
+                    });
+                }
             }
         }
+
+        let remain_ms = if active { end - now } else { start - now };
+
+        result.push(BaroInfo {
+            active,
+            location,
+            tag,
+            start_ms: start,
+            end_ms: end,
+            remain_ms,
+            remain_str: fmt_remain_baro(remain_ms),
+            items,
+        });
     }
 
-    let remain_ms = if active { end - now } else { start - now };
-
-    Some(BaroInfo {
-        active,
-        location,
-        start_ms: start,
-        end_ms: end,
-        remain_ms,
-        remain_str: fmt_remain_baro(remain_ms),
-        items,
-    })
+    result
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

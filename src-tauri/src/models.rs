@@ -40,6 +40,7 @@ pub struct BaroItem {
 pub struct BaroInfo {
     pub active: bool,          // currently at the relay (Activation <= now < Expiry)
     pub location: String,      // relay name (e.g. "Larunda Relay / 水星")
+    pub tag: String,           // "" = regular, "TennoCon" = TennoCon special trader
     pub start_ms: i64,         // Activation timestamp
     pub end_ms: i64,           // Expiry timestamp
     pub remain_ms: i64,        // ms until arrival (if !active) or departure (if active)
@@ -176,7 +177,7 @@ pub struct AppStatePayload {
     pub countdown_secs: u32,
     pub mission_timer: MissionTimerPayload,
     #[serde(default)]
-    pub baro: Option<BaroInfo>,
+    pub baro: Vec<BaroInfo>,
     #[serde(default)]
     pub bounties: Vec<BountyInfo>,
     #[serde(default)]

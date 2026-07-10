@@ -428,7 +428,7 @@ fn build_payload(state: &AppState, timer_state: &MissionTimerState) -> AppStateP
     // Recompute Baro's countdown every tick. When the arrival timer elapses we
     // flip to the departure countdown locally so it doesn't sit stale until the
     // next 30-min API poll refreshes the manifest.
-    if let Some(b) = &mut baro {
+    for b in &mut baro {
         if !b.active && now >= b.start_ms {
             b.active = true;
         }
@@ -507,7 +507,7 @@ fn refresh_cached_payload(
             c.remain_str = fmt_remain(remain);
         }
     }
-    if let Some(b) = &mut p.baro {
+    for b in &mut p.baro {
         if !b.active && now >= b.start_ms {
             b.active = true;
         }
@@ -564,6 +564,12 @@ async fn fetch_store_emit(
                 s.countdown_secs = REFRESH_SEC;
                 s.last_fetch_wall_ms = now_ms(); // wall-clock anchor for tick-loop countdown derivation
                 s.initialized = true; // data is ready — allow local computation (arbitration) to join
+                // Reset Baro arrival flag when none are active, so the next
+                // arrival triggers the auto-refresh task again.
+                let any_active = s.baro.iter().any(|b| b.active);
+                if !any_active {
+                    s.baro_arrival_handled = false;
+                }
                 // Build a fresh payload while we hold the write lock, cache it in
                 // state so the per-second tick can refresh it in-place without
                 // cloning every fissure/cycle/bounty vec all over again.
@@ -1238,6 +1244,10 @@ pub fn run() {
                     let need_cycle_check = elapsed_wall > Duration::from_secs(2);
 
                     // ── Async lock acquisition + synchronous state update ──
+                    // Detect Baro arrival transition BEFORE refresh so we can
+                    // trigger a worldstate fetch after the write lock is released.
+                    let baro_was_inactive: bool;
+                    let mut baro_just_arrived = false;
                     {
                         let mut s = tick_state.write().await;
                         // ── Countdown from wall clock (not an accumulator) ──
@@ -1256,6 +1266,9 @@ pub fn run() {
                         let countdown = s.countdown_secs;
                         let last_update = s.last_update.clone();
                         let initialized = s.initialized;
+                        // Snapshot Baro's active flag before the refresh — if any
+                        // flips from false→true this tick, we need a data refresh.
+                        baro_was_inactive = !s.cached_payload.baro.iter().any(|b| b.active);
                         refresh_cached_payload(
                             &mut s.cached_payload,
                             now,
@@ -1264,6 +1277,26 @@ pub fn run() {
                             &last_update,
                             initialized,
                         );
+                        // Did any Baro just arrive this tick?
+                        let baro_now_active = s.cached_payload.baro.iter().any(|b| b.active);
+                        if baro_was_inactive && baro_now_active && !s.baro_arrival_handled {
+                            s.baro_arrival_handled = true;
+                            baro_just_arrived = true;
+                        }
+                    }
+
+                    // ── Baro arrival auto-refresh: fire immediately + 5 s retry.
+                    // The API may need a few seconds to update after Baro lands.
+                    if baro_just_arrived {
+                        let fetch_state = tick_state.clone();
+                        let fetch_timer = tick_timer.clone();
+                        let fetch_handle = tick_handle.clone();
+                        let fetch_config = tick_config.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let _ = fetch_store_emit(&fetch_state, &fetch_timer, &fetch_handle, &fetch_config).await;
+                            tokio::time::sleep(Duration::from_secs(5)).await;
+                            let _ = fetch_store_emit(&fetch_state, &fetch_timer, &fetch_handle, &fetch_config).await;
+                        });
                     }
 
                     // ── Read-only emit + alert checks (purely synchronous) ──

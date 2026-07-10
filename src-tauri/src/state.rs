@@ -7,7 +7,7 @@ pub struct AppState {
     pub hard_fissures: Vec<Fissure>,
     pub storm_fissures: Vec<Fissure>,
     pub cycles: Vec<CycleInfo>,
-    pub baro: Option<BaroInfo>,
+    pub baro: Vec<BaroInfo>,
     pub bounties: Vec<BountyInfo>,
     pub circuit: Option<CircuitInfo>,
     pub last_update: String,
@@ -23,6 +23,10 @@ pub struct AppState {
     /// Cached payload rebuilt on each API fetch and mutated in-place on each
     /// tick — avoids cloning the full fissure/cycle/bounty vecs every second.
     pub cached_payload: AppStatePayload,
+    /// Set to true when the tick loop detects Baro's arrival and triggers the
+    /// auto-refresh task. Reset when Baro leaves, so the next arrival triggers
+    /// again. Prevents spawning duplicate refresh tasks on every tick.
+    pub baro_arrival_handled: bool,
 }
 
 impl AppState {
@@ -32,7 +36,7 @@ impl AppState {
             hard_fissures: Vec::new(),
             storm_fissures: Vec::new(),
             cycles: Vec::new(),
-            baro: None,
+            baro: Vec::new(),
             bounties: Vec::new(),
             circuit: None,
             last_update: String::new(),
@@ -40,6 +44,7 @@ impl AppState {
             initialized: false,
             last_fetch_wall_ms: 0,
             cached_payload: AppStatePayload::default(),
+            baro_arrival_handled: false,
         }
     }
 }
