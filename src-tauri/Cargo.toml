@@ -1,6 +1,6 @@
 [package]
 name = "voxalic"
-version = "1.2.2"
+version = "1.2.3"
 description = "VoxAlic — Warframe worldstate monitor"
 authors = ["you"]
 edition = "2021"
