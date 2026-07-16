@@ -196,23 +196,24 @@ pub fn bring_to_front(hwnd: isize) {
 /// Strip extra rows from a borderless / non-16:9 window capture so that the
 /// result matches the given `target_aspect` ratio. Returns the cropped BGR
 /// pixel buffer together with the new width and height.
-pub fn strip_frame(
-    pixels: &[u8],
+pub fn strip_frame<'a>(
+    pixels: &'a [u8],
     width: u32,
     height: u32,
     target_aspect: f64,
-) -> (Vec<u8>, u32, u32) {
+) -> (&'a [u8], u32, u32) {
     let current_aspect = width as f64 / height as f64;
     if current_aspect < target_aspect * 0.95 {
-        return (pixels.to_vec(), width, height);
+        return (pixels, width, height);
     }
 
     let expected_height = (width as f64 / target_aspect) as u32;
     if expected_height >= height {
-        return (pixels.to_vec(), width, height);
+        return (pixels, width, height);
     }
     let strip = (height - expected_height) / 2;
-    let start = (strip * width * 3) as usize;
-    let len = (expected_height * width * 3) as usize;
-    (pixels[start..start + len].to_vec(), width, expected_height)
+    let bpp = (pixels.len() / (width * height) as usize).max(3);
+    let start = (strip * width) as usize * bpp;
+    let len = (expected_height * width) as usize * bpp;
+    (&pixels[start..start + len], width, expected_height)
 }

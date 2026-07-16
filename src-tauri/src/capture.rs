@@ -7,6 +7,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowRect, PW_RENDERFULLCONTENT,
 };
 
+use base64::Engine;
 use crate::window;
 use windows::Win32::Graphics::Dwm::{
     DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS,
@@ -38,16 +39,13 @@ const BLACK_LEVEL: u8 = 8;
 /// `PrintWindow` captures a window that is occluded, mid-render, or not
 /// composited yet. Such frames are useless for OCR and should be discarded.
 /// A frame is considered black when at most 1% of its pixels are non-black.
-fn is_black_frame(bgr: &[u8]) -> bool {
-    if bgr.len() < 3 {
-        return true;
-    }
-    let total = bgr.len() / 3;
+/// `bpp` is bytes-per-pixel (4 for BGRA, 3 for BGR).
+fn is_black_frame(buf: &[u8], bpp: usize) -> bool {
+    let total = buf.len() / bpp;
     let mut non_black = 0usize;
-    for px in bgr.chunks_exact(3) {
+    for px in buf.chunks_exact(bpp) {
         if px[0] > BLACK_LEVEL || px[1] > BLACK_LEVEL || px[2] > BLACK_LEVEL {
             non_black += 1;
-            // Early exit: > 1% non-black means it's a real frame.
             if non_black * 100 > total {
                 return false;
             }
@@ -56,7 +54,7 @@ fn is_black_frame(bgr: &[u8]) -> bool {
     true
 }
 
-/// Capture the full window client area as a top-down **BGR** buffer.
+/// Capture the full window client area as a top-down **BGRA** buffer.
 ///
 /// `hwnd_raw` is the raw window handle (`HWND.0 as isize`). Returns `None` if
 /// the window is invalid/minimized, any GDI/DWM call fails, or the captured
@@ -159,24 +157,25 @@ pub fn capture_full(hwnd_raw: isize) -> Option<(Vec<u8>, u32, u32)> {
         return None;
     }
 
-    // Convert full window BGRA → BGR (drop alpha)
-    let mut bgr = vec![0u8; full_pixel_count * 3];
-    for i in 0..full_pixel_count {
-        bgr[i * 3] = pixels[i * 4];         // B
-        bgr[i * 3 + 1] = pixels[i * 4 + 1]; // G
-        bgr[i * 3 + 2] = pixels[i * 4 + 2]; // R
-    }
-
-    if is_black_frame(&bgr) {
+    // Keep BGRA (4 bytes/pixel) — conversion to BGR is deferred to ROI
+    // extraction (crop_roi_bgra), avoiding a full-frame copy here.
+    if is_black_frame(&pixels, 4) {
         return None;
     }
 
-    Some((bgr, win_w as u32, win_h as u32))
+    Some((pixels, win_w as u32, win_h as u32))
 }
 
-/// Crop a fractional ROI out of a full BGR frame. Coordinates `x/y/w/h` are
-/// fractions of `w`/`h` in 0.0–1.0. Returns `None` if the ROI is out of bounds.
+/// Crop a fractional ROI out of a full-frame BGRA buffer, producing a BGR
+/// ROI (3 bytes/pixel). Coordinates `x/y/w/h` are fractions of `w`/`h` in
+/// 0.0–1.0. Returns `None` if the ROI is out of bounds.
 fn crop_roi(frame: &[u8], w: u32, h: u32, roi: &ROIConfig) -> Option<(Vec<u8>, u32, u32)> {
+    crop_roi_bgra(frame, w, h, roi, 4)
+}
+
+/// Generic ROI crop: reads `src_bpp`-byte pixels from `frame`, writes 3-byte
+/// BGR pixels to output. For BGRA source (bpp=4), alpha is dropped.
+fn crop_roi_bgra(frame: &[u8], w: u32, h: u32, roi: &ROIConfig, src_bpp: u32) -> Option<(Vec<u8>, u32, u32)> {
     if roi.x + roi.w > 1.01 || roi.y + roi.h > 1.01 {
         return None;
     }
@@ -190,10 +189,17 @@ fn crop_roi(frame: &[u8], w: u32, h: u32, roi: &ROIConfig) -> Option<(Vec<u8>, u
 
     let row_bytes = (roi_w * 3) as usize;
     let mut out = vec![0u8; row_bytes * roi_h as usize];
+    let src_bpp = src_bpp as usize;
     for row in 0..roi_h {
-        let src = ((roi_y + row) * w + roi_x) as usize * 3;
-        let dst = row as usize * row_bytes;
-        out[dst..dst + row_bytes].copy_from_slice(&frame[src..src + row_bytes]);
+        let src_row = ((roi_y + row) * w + roi_x) as usize * src_bpp;
+        let dst_row = row as usize * row_bytes;
+        for col in 0..roi_w {
+            let src = src_row + col as usize * src_bpp;
+            let dst = dst_row + col as usize * 3;
+            out[dst] = frame[src];         // B
+            out[dst + 1] = frame[src + 1]; // G
+            out[dst + 2] = frame[src + 2]; // R
+        }
     }
     Some((out, roi_w, roi_h))
 }
@@ -214,9 +220,9 @@ pub fn capture_roi_stripped(hwnd: isize, roi: &ROIConfig, strip_frame: bool) -> 
     let (content, cw, ch) = if strip_frame {
         window::strip_frame(&frame, w, h, 16.0 / 9.0)
     } else {
-        (frame, w, h)
+        (&*frame, w, h)
     };
-    crop_roi(&content, cw, ch, roi)
+    crop_roi(content, cw, ch, roi)
 }
 
 /// Capture the full window (optionally frame-stripped to match the OCR pipeline)
@@ -228,16 +234,17 @@ pub fn capture_preview_data_url(hwnd: isize, strip_frame: bool) -> Option<String
     let (content, cw, ch) = if strip_frame {
         window::strip_frame(&frame, w, h, 16.0 / 9.0)
     } else {
-        (frame, w, h)
+        (&*frame, w, h)
     };
 
-    // BGR → RGB for the image crate.
+    // BGRA → RGB for the image crate.
     let px_count = (cw * ch) as usize;
     let mut rgb = vec![0u8; px_count * 3];
+    let src_bpp = 4;
     for i in 0..px_count {
-        rgb[i * 3] = content[i * 3 + 2];     // R
-        rgb[i * 3 + 1] = content[i * 3 + 1]; // G
-        rgb[i * 3 + 2] = content[i * 3];     // B
+        rgb[i * 3] = content[i * src_bpp + 2];     // R
+        rgb[i * 3 + 1] = content[i * src_bpp + 1]; // G
+        rgb[i * 3 + 2] = content[i * src_bpp];     // B
     }
 
     let img = image::RgbImage::from_raw(cw, ch, rgb)?;
@@ -245,32 +252,5 @@ pub fn capture_preview_data_url(hwnd: isize, strip_frame: bool) -> Option<String
     img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
         .ok()?;
 
-    Some(format!("data:image/png;base64,{}", base64_encode(&png)))
-}
-
-/// Minimal standard-base64 encoder (no padding omitted). Avoids pulling in a
-/// dependency just for the one-shot calibration preview.
-fn base64_encode(data: &[u8]) -> String {
-    const TABLE: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
-        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
-        let n = (b0 << 16) | (b1 << 8) | b2;
-        out.push(TABLE[((n >> 18) & 63) as usize] as char);
-        out.push(TABLE[((n >> 12) & 63) as usize] as char);
-        out.push(if chunk.len() > 1 {
-            TABLE[((n >> 6) & 63) as usize] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            TABLE[(n & 63) as usize] as char
-        } else {
-            '='
-        });
-    }
-    out
+    Some(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(&png)))
 }

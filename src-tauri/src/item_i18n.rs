@@ -9,12 +9,13 @@
 //! Lookup handles Baro's `/Lotus/StoreItems/...` paths by also trying the form
 //! with the `StoreItems/` segment removed, which is how the i18n keys are named.
 
+use flate2::read::GzDecoder;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
 
-/// Compact `uniqueName -> 简中名` map shipped with the binary (first-run/offline).
-const EMBEDDED: &str = include_str!("../resources/baro_zh.json");
+/// gzip-compressed `uniqueName -> 简中名` map (build.rs compresses resources/baro_zh.json).
+static EMBEDDED_GZ: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/baro_zh_compressed.bin"));
 /// Upstream full i18n table (51 MB, 14 languages). master branch only.
 const REMOTE_URL: &str =
     "https://raw.githubusercontent.com/WFCD/warframe-items/master/data/json/i18n.json";
@@ -24,11 +25,12 @@ const FILE_NAME: &str = "baro_zh.json";
 static MAP: OnceLock<RwLock<HashMap<String, String>>> = OnceLock::new();
 
 fn cell() -> &'static RwLock<HashMap<String, String>> {
-    MAP.get_or_init(|| RwLock::new(parse_compact(EMBEDDED)))
+    MAP.get_or_init(|| RwLock::new(load_compressed().unwrap_or_default()))
 }
 
-fn parse_compact(s: &str) -> HashMap<String, String> {
-    serde_json::from_str(s).unwrap_or_default()
+fn load_compressed() -> Result<HashMap<String, String>, String> {
+    let decoder = GzDecoder::new(EMBEDDED_GZ);
+    serde_json::from_reader(decoder).map_err(|e| format!("decompress baro_zh: {}", e))
 }
 
 /// Load the user's override map from the app data dir if present; otherwise the

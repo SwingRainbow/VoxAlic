@@ -2,6 +2,7 @@ mod api;
 mod capture;
 mod config;
 mod item_i18n;
+mod log_init;
 mod market;
 mod market_auth;
 mod market_orders;
@@ -14,6 +15,7 @@ mod window;
 
 use std::sync::Arc;
 use std::sync::RwLock as StdRwLock;
+use log::{warn, error};
 use std::time::Duration;
 use state::{AppState, SharedState};
 use models::{AppStatePayload, MissionTimerPayload};
@@ -25,6 +27,7 @@ use market_orders::{market_list_orders, market_create_order, market_update_order
 use std::sync::mpsc;
 use mission_timer::{AlertMsg, MissionTimerState, TimerCommand, start_timer_thread};
 use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use ocr::DigitTemplates;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
@@ -32,7 +35,7 @@ use tauri::{
     Manager, Emitter,
 };
 
-const REFRESH_SEC: u32 = 1800;
+const REFRESH_SEC: u32 = 300;
 
 // ── Subscription notifications ───────────────────────────────────────────────
 
@@ -532,6 +535,81 @@ fn refresh_cached_payload(
 type SharedConfig = Arc<StdRwLock<AppConfig>>;
 type MissionTimerShared = Arc<StdRwLock<MissionTimerState>>;
 
+// ── Hotkey parsing ──────────────────────────────────────────────────────────
+
+fn parse_key_code(s: &str) -> Option<Code> {
+    match s {
+        "A" => Some(Code::KeyA), "B" => Some(Code::KeyB), "C" => Some(Code::KeyC),
+        "D" => Some(Code::KeyD), "E" => Some(Code::KeyE), "F" => Some(Code::KeyF),
+        "G" => Some(Code::KeyG), "H" => Some(Code::KeyH), "I" => Some(Code::KeyI),
+        "J" => Some(Code::KeyJ), "K" => Some(Code::KeyK), "L" => Some(Code::KeyL),
+        "M" => Some(Code::KeyM), "N" => Some(Code::KeyN), "O" => Some(Code::KeyO),
+        "P" => Some(Code::KeyP), "Q" => Some(Code::KeyQ), "R" => Some(Code::KeyR),
+        "S" => Some(Code::KeyS), "T" => Some(Code::KeyT), "U" => Some(Code::KeyU),
+        "V" => Some(Code::KeyV), "W" => Some(Code::KeyW), "X" => Some(Code::KeyX),
+        "Y" => Some(Code::KeyY), "Z" => Some(Code::KeyZ),
+        "0" => Some(Code::Digit0), "1" => Some(Code::Digit1), "2" => Some(Code::Digit2),
+        "3" => Some(Code::Digit3), "4" => Some(Code::Digit4), "5" => Some(Code::Digit5),
+        "6" => Some(Code::Digit6), "7" => Some(Code::Digit7), "8" => Some(Code::Digit8),
+        "9" => Some(Code::Digit9),
+        "F1" => Some(Code::F1), "F2" => Some(Code::F2), "F3" => Some(Code::F3),
+        "F4" => Some(Code::F4), "F5" => Some(Code::F5), "F6" => Some(Code::F6),
+        "F7" => Some(Code::F7), "F8" => Some(Code::F8), "F9" => Some(Code::F9),
+        "F10" => Some(Code::F10), "F11" => Some(Code::F11), "F12" => Some(Code::F12),
+        "Space" => Some(Code::Space),
+        "Tab" => Some(Code::Tab),
+        "Escape" | "Esc" => Some(Code::Escape),
+        "Backspace" => Some(Code::Backspace),
+        "\\" | "Backslash" => Some(Code::Backslash),
+        "Enter" | "Return" => Some(Code::Enter),
+        "Insert" => Some(Code::Insert),
+        "Delete" => Some(Code::Delete),
+        "Home" => Some(Code::Home),
+        "End" => Some(Code::End),
+        "PageUp" => Some(Code::PageUp),
+        "PageDown" => Some(Code::PageDown),
+        "Up" => Some(Code::ArrowUp),
+        "Down" => Some(Code::ArrowDown),
+        "Left" => Some(Code::ArrowLeft),
+        "Right" => Some(Code::ArrowRight),
+        _ => None,
+    }
+}
+
+fn parse_hotkey_string(s: &str) -> Result<Shortcut, String> {
+    let parts: Vec<&str> = s.split('+').map(|p| p.trim()).collect();
+    let key_str = parts[parts.len() - 1];
+    if key_str.is_empty() {
+        return Err("缺少按键，格式应为 Mod+Key 或 Key".into());
+    }
+    let key = parse_key_code(key_str).ok_or_else(|| format!("未知按键: {}", key_str))?;
+
+    let mut mods = Modifiers::empty();
+    for m in &parts[..parts.len() - 1] {
+        match *m {
+            "Ctrl" | "Control" => mods |= Modifiers::CONTROL,
+            "Alt" => mods |= Modifiers::ALT,
+            "Shift" => mods |= Modifiers::SHIFT,
+            "Meta" | "Win" | "Super" => mods |= Modifiers::META,
+            other => return Err(format!("未知修饰键: {}", other)),
+        }
+    }
+    Ok(Shortcut::new(Some(mods), key))
+}
+
+/// Register a hotkey by string. Returns Ok(()) or Err(conflict message).
+fn register_hotkey_str(app: &tauri::AppHandle, s: &str) -> Result<(), String> {
+    let sc = parse_hotkey_string(s)?;
+    app.global_shortcut().register(sc).map_err(|e| format!("热键冲突: {}", e))
+}
+
+/// Unregister a hotkey by string. If parse fails, silently ignore.
+fn unregister_hotkey_str(app: &tauri::AppHandle, s: &str) {
+    if let Ok(sc) = parse_hotkey_string(s) {
+        let _ = app.global_shortcut().unregister(sc);
+    }
+}
+
 /// Fetch worldstate, store it into `state`, then emit `worldstate-update`.
 /// Network/parse errors are returned; background loops ignore them, the
 /// `refresh_now` command surfaces them to the frontend.
@@ -614,6 +692,48 @@ fn set_config(cfg: tauri::State<'_, SharedConfig>, config: AppConfig, app: tauri
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     save_config(&app_data_dir, &config)?;
     *cfg.write().unwrap() = config;
+    Ok(())
+}
+
+#[tauri::command]
+fn get_hotkey(cfg: tauri::State<'_, SharedConfig>) -> Option<String> {
+    cfg.read().unwrap().hotkey.clone()
+}
+
+#[tauri::command]
+fn set_hotkey(
+    cfg: tauri::State<'_, SharedConfig>,
+    app: tauri::AppHandle,
+    hotkey: Option<String>,
+) -> Result<(), String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+
+    // Hold the write lock for the entire read→unregister→register→persist
+    // sequence so two concurrent set_hotkey calls cannot leave stale shortcuts
+    // registered at the OS level (TOCTOU).
+    let mut c = cfg.write().unwrap();
+    let old = c.hotkey.clone();
+
+    // Unregister old hotkey if one was set.
+    if let Some(ref old_hk) = old {
+        unregister_hotkey_str(&app, old_hk);
+    }
+
+    // Register new hotkey if provided.  On failure, re-register the old one
+    // so the user isn't left with no hotkey at all.
+    if let Some(ref hk) = hotkey {
+        if let Err(e) = register_hotkey_str(&app, hk) {
+            if let Some(ref old_hk) = old {
+                let _ = register_hotkey_str(&app, old_hk);
+            }
+            return Err(e);
+        }
+    }
+
+    // Persist.
+    c.hotkey = hotkey;
+    save_config(&app_data_dir, &c)?;
+
     Ok(())
 }
 
@@ -1036,9 +1156,32 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(
+            |app: &tauri::AppHandle,
+             _shortcut: &tauri_plugin_global_shortcut::Shortcut,
+             event: tauri_plugin_global_shortcut::ShortcutEvent| {
+                if event.state != ShortcutState::Pressed {
+                    return;
+                }
+                // Any registered hotkey toggles the main window.
+                if let Some(w) = app.get_webview_window("main") {
+                    let vis = w.is_visible().unwrap_or(false);
+                    let foc = w.is_focused().unwrap_or(false);
+                    if !vis {
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    } else if !foc {
+                        let _ = w.set_focus();
+                    } else {
+                        let _ = w.hide();
+                    }
+                }
+            },
+        ).build())
         .setup(move |app| {
             // Load item-name 中文 table (user override file, else embedded default).
             item_i18n::init(&app_data_dir);
+            log_init::init(&app_data_dir);
 
             // Market cache background init: notify frontend when ready.
             let mc = market_cache.clone();
@@ -1047,6 +1190,21 @@ pub fn run() {
                 let count = mc.read().await.items.len();
                 let _ = mc_handle.emit("market-cache-ready", count as i32);
             });
+
+            // Register global hotkey from config (if set).
+            {
+                let cfg = config.read().unwrap();
+                if let Some(ref hk) = cfg.hotkey {
+                    match parse_hotkey_string(hk) {
+                        Ok(sc) => {
+                            if let Err(e) = app.handle().global_shortcut().register(sc) {
+                                warn!("hotkey register '{hk}' failed: {e}");
+                            }
+                        }
+                        Err(e) => warn!("hotkey parse '{hk}' failed: {e}"),
+                    }
+                }
+            }
 
             // Mission timer command channel
             let timer_config = config.clone();
@@ -1200,7 +1358,11 @@ pub fn run() {
                 let mut interval = tokio::time::interval(Duration::from_secs(REFRESH_SEC as u64));
                 loop {
                     interval.tick().await;
-                    if fetch_store_emit(&fetch_state, &fetch_timer, &fetch_handle, &fetch_config).await.is_ok() {
+                    if let Err(e) = fetch_store_emit(&fetch_state, &fetch_timer, &fetch_handle, &fetch_config).await {
+                        error!("fetch-loop worldstate fetch failed: {e}");
+                        continue;
+                    }
+                    {
                         let now = now_ms();
                         let (all_fissures, cycles, fissure_alerts, cycle_alerts, arb_alerts) = {
                             let s = fetch_state.read().await;
@@ -1248,6 +1410,7 @@ pub fn run() {
                     // trigger a worldstate fetch after the write lock is released.
                     let baro_was_inactive: bool;
                     let mut baro_just_arrived = false;
+                    let need_fetch: bool;  // self-healing: tick-loop gap recovery
                     {
                         let mut s = tick_state.write().await;
                         // ── Countdown from wall clock (not an accumulator) ──
@@ -1258,6 +1421,12 @@ pub fn run() {
                             0 // NTP backward jump — stay conservative
                         };
                         s.countdown_secs = REFRESH_SEC.saturating_sub(elapsed_s);
+                        // Self-healing: if the periodic fetch loop missed a cycle
+                        // (network blip, sleep, etc.), trigger a fetch from the tick.
+                        need_fetch = elapsed_s >= REFRESH_SEC;
+                        if need_fetch {
+                            s.last_fetch_wall_ms = now; // reset timer now so we don't re-fire every tick
+                        }
                         {
                             let mut t = tick_timer.write().unwrap();
                             t.update_elapsed();
@@ -1296,6 +1465,23 @@ pub fn run() {
                             let _ = fetch_store_emit(&fetch_state, &fetch_timer, &fetch_handle, &fetch_config).await;
                             tokio::time::sleep(Duration::from_secs(5)).await;
                             let _ = fetch_store_emit(&fetch_state, &fetch_timer, &fetch_handle, &fetch_config).await;
+                        });
+                    }
+
+                    // ── Self-healing fetch: periodic loop missed a cycle.
+                    // When the countdown expires without a refresh (network blip,
+                    // sleep gap, etc.), the tick loop triggers a fetch so fissures
+                    // don't dwindle.  Normal-path fetches happen in the background
+                    // loop; this is a safety net.
+                    if need_fetch && !baro_just_arrived {
+                        let fetch_state = tick_state.clone();
+                        let fetch_timer = tick_timer.clone();
+                        let fetch_handle = tick_handle.clone();
+                        let fetch_config = tick_config.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(e) = fetch_store_emit(&fetch_state, &fetch_timer, &fetch_handle, &fetch_config).await {
+                                error!("tick self-healing fetch failed: {e}");
+                            }
                         });
                     }
 
@@ -1520,7 +1706,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, timer_command, list_windows, select_window, single_capture, capture_preview, test_recognize, test_alert, update_item_names, item_names_count, game_data_version, get_notifications, clear_notifications, open_main_navigate, get_autostart, set_autostart, uninstall_clean, check_for_update, install_update, get_bark_url, test_phone_push, search_market_items, get_market_item, refresh_market_cache, market_cache_status, translate_items, market_signin, market_signout, market_auth_status, market_set_status, market_list_orders, market_create_order, market_update_order, market_delete_order, market_close_order])
+        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, get_hotkey, set_hotkey, timer_command, list_windows, select_window, single_capture, capture_preview, test_recognize, test_alert, update_item_names, item_names_count, game_data_version, get_notifications, clear_notifications, open_main_navigate, get_autostart, set_autostart, uninstall_clean, check_for_update, install_update, get_bark_url, test_phone_push, search_market_items, get_market_item, refresh_market_cache, market_cache_status, translate_items, market_signin, market_signout, market_auth_status, market_set_status, market_list_orders, market_create_order, market_update_order, market_delete_order, market_close_order])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

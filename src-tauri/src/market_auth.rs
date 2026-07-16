@@ -17,7 +17,9 @@ use tauri::Emitter;
 use futures_util::SinkExt;
 use futures_util::StreamExt;
 
+use base64::Engine;
 use crate::models::{MarketError, MarketAuthStatus};
+use log::debug;
 
 const MARKET_WEB: &str = "https://warframe.market";
 const MARKET_API_V1: &str = "https://api.warframe.market/v1";
@@ -93,211 +95,11 @@ pub struct MarketAuth {
 
 pub type SharedMarketAuth = Arc<MarketAuth>;
 
-// ── WebView login (spy phase) ─────────────────────────────────────────────
-
-/// Result of a spy interception — captures the login API response body.
-struct SpyResult {
-    url: String,
-    status: u16,
-    jwt_found: bool,
-    jwt: String,
-    name: String,
-    avatar: String,
-    rep: String,
-    body_head: String,
-}
-
-/// Guard that manages the CSRF-fetcher WebView lifecycle.
-struct CsrfGuard {
-    app_handle: tauri::AppHandle,
-    label: &'static str,
-}
-
-impl CsrfGuard {
-    /// Create a webview with navigation interceptor for spy callback.
-    fn new_spy(
-        app_handle: &tauri::AppHandle,
-    ) -> Result<(Self, tokio::sync::oneshot::Receiver<SpyResult>), MarketError> {
-        let label = "csrf-fetcher";
-        let url = url::Url::parse(&format!("{}/auth/signin", MARKET_WEB))
-            .map_err(|e| MarketError {
-                code: "unknown".into(),
-                message: format!("CSRF URL parse error: {}", e),
-            })?;
-
-        let (tx, rx) = tokio::sync::oneshot::channel::<SpyResult>();
-        let tx = std::sync::Mutex::new(Some(tx));
-
-        tauri::WebviewWindowBuilder::new(app_handle, label, tauri::WebviewUrl::External(url))
-            .visible(true) // User needs to see the real page to log in
-            .on_navigation(move |nav_url| {
-                if nav_url.host_str() == Some("csrf.callback") {
-                    let mut is_spy = false;
-                    let mut jwt = String::new();
-                    let mut name = String::new();
-                    let mut avatar = String::new();
-                    let mut rep = String::new();
-                    let mut error = String::new();
-                    // Collect all query params; handle both spy and jwt callbacks.
-                    // (We can't access both sets of params in separate if branches easily.)
-                    let mut spy_raw = String::new();
-                    for (key, value) in nav_url.query_pairs() {
-                        match key.as_ref() {
-                            "spy" => { spy_raw = value.into_owned(); is_spy = true; }
-                            "jwt" => jwt = value.into_owned(),
-                            "name" => name = value.into_owned(),
-                            "avatar" => avatar = value.into_owned(),
-                            "rep" => rep = value.into_owned(),
-                            "error" => error = value.into_owned(),
-                            _ => {}
-                        }
-                    }
-                    if let Some(t) = tx.lock().unwrap().take() {
-                        if is_spy && !spy_raw.is_empty() {
-                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&spy_raw) {
-                                let _ = t.send(SpyResult {
-                                    url: v.get("url").and_then(|s| s.as_str()).unwrap_or("").into(),
-                                    status: v.get("status").and_then(|s| s.as_u64()).unwrap_or(0) as u16,
-                                    jwt_found: v.get("jwt_found").and_then(|s| s.as_bool()).unwrap_or(false),
-                                    jwt: v.get("jwt").and_then(|s| s.as_str()).unwrap_or("").into(),
-                                    name: v.get("name").and_then(|s| s.as_str()).unwrap_or("").into(),
-                                    avatar: v.get("avatar").and_then(|s| s.as_str()).unwrap_or("").into(),
-                                    rep: v.get("rep").and_then(|s| s.as_str()).unwrap_or("").into(),
-                                    body_head: v.get("body_head").and_then(|s| s.as_str()).unwrap_or("").into(),
-                                });
-                            }
-                        } else if !jwt.is_empty() {
-                            let _ = t.send(SpyResult {
-                                url: "jwt-intercepted".into(),
-                                status: 200,
-                                jwt_found: true,
-                                jwt,
-                                name,
-                                avatar,
-                                rep,
-                                body_head: String::new(),
-                            });
-                        } else if !error.is_empty() {
-                            let _ = t.send(SpyResult {
-                                url: "error".into(), status: 0, jwt_found: false,
-                                jwt: String::new(), name: String::new(),
-                                avatar: String::new(), rep: String::new(),
-                                body_head: error,
-                            });
-                        }
-                    }
-                    return false;
-                }
-                true
-            })
-            .build()
-            .map_err(|e| MarketError {
-                code: "webview_error".into(),
-                message: format!("无法创建 WebView: {}", e),
-            })?;
-
-        Ok((Self {
-            app_handle: app_handle.clone(),
-            label,
-        }, rx))
-    }
-}
-
-impl Drop for CsrfGuard {
-    fn drop(&mut self) {
-        let h = self.app_handle.clone();
-        let label = self.label;
-        let h2 = h.clone();
-        let _ = h.run_on_main_thread(move || {
-            if let Some(wv) = h2.get_webview_window(label) {
-                let _ = wv.close();
-            }
-        });
-    }
-}
-
-/// Spy phase: open visible WebView, monkey-patch fetch, capture login response.
-async fn spy_login(
-    app_handle: &tauri::AppHandle,
-) -> Result<SpyResult, MarketError> {
-    let _ = app_handle.emit("market-login-phase", "请在打开的窗口中登录…");
-
-    let (guard, rx) = CsrfGuard::new_spy(app_handle)?;
-
-    // Wait for page load + CF challenge.
-    tokio::time::sleep(Duration::from_secs(3)).await;
-
-    // Inject JS that monkey-patches fetch to spy ONLY on login API responses.
-    let js = r#"(function(){
-  var origFetch = window.fetch;
-  var captured = false;
-  var userName = ''; var userAvatar = ''; var userRep = '';
-  window.fetch = function(url, opts) {
-    // Intercept REQUEST: after login, API calls carry JWT in Authorization header.
-    if (!captured && opts && opts.headers) {
-      var auth = null;
-      if (opts.headers instanceof Headers) {
-        auth = opts.headers.get('Authorization') || opts.headers.get('authorization');
-      } else if (typeof opts.headers === 'object') {
-        auth = opts.headers['Authorization'] || opts.headers['authorization'];
-      }
-      if (auth && (auth.indexOf('Bearer ') === 0 || auth.indexOf('JWT ') === 0)) {
-        captured = true;
-        var jwt = auth.replace('Bearer ', '').replace('JWT ', '');
-        var p = 'jwt=' + encodeURIComponent(jwt);
-        if (userName) p += '&name=' + encodeURIComponent(userName);
-        if (userAvatar) p += '&avatar=' + encodeURIComponent(userAvatar);
-        if (userRep !== '') p += '&rep=' + encodeURIComponent(userRep);
-        window.location = 'https://csrf.callback/?' + p;
-        return origFetch.apply(this, arguments);
-      }
-    }
-    // Intercept RESPONSE: capture login result for user info.
-    return origFetch.apply(this, arguments).then(function(resp) {
-      var urlStr = typeof url === 'string' ? url : (url.url || '');
-      if (!captured && urlStr.indexOf('/auth/signin') !== -1) {
-        var clone = resp.clone();
-        clone.text().then(function(body) {
-          try {
-            var data = JSON.parse(body);
-            userName = (data.payload && data.payload.user && data.payload.user.ingame_name) || '';
-            userAvatar = (data.payload && data.payload.user && data.payload.user.avatar) || '';
-            userRep = (data.payload && data.payload.user && data.payload.user.reputation);
-            if (userRep === undefined || userRep === null) userRep = '';
-          } catch(e) {}
-        }).catch(function(){});
-      }
-      return resp;
-    });
-  };
-})()"#;
-
-    if let Some(wv) = app_handle.get_webview_window("csrf-fetcher") {
-        let _ = wv.eval(js);
-    }
-
-    let result = tokio::time::timeout(Duration::from_secs(120), rx).await;
-    drop(guard);
-
-    match result {
-        Ok(Ok(spy)) => Ok(spy),
-        Ok(Err(_)) | Err(_) => Err(MarketError {
-            code: "timeout".into(),
-            message: "登录超时（120s），请重试".into(),
-        }),
-    }
-}
-
 // ── JWT helpers ───────────────────────────────────────────────────────────
 
 fn jwt_sub(jwt: &str) -> Option<String> {
     let payload = jwt.split('.').nth(1)?;
-    let padded = match payload.len() % 4 {
-        2 => format!("{}==", payload),
-        3 => format!("{}=", payload),
-        _ => payload.to_string(),
-    };
-    let decoded = base64_url_decode(&padded)?;
+    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload).ok()?;
     let v: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
     v.get("sub").and_then(|s| s.as_str()).map(String::from)
 }
@@ -457,9 +259,7 @@ async fn do_refresh_with_csrf(
         .header("x-csrf-token", &ctx.csrf_token)
         .header("Content-Type", "application/json")
         .json(&serde_json::json!({ "refresh_token": refresh_token }))
-        .send().await.map_err(|_| MarketError {
-            code: "network_timeout".into(), message: "网络连接超时".into(),
-        })?;
+        .send().await.map_err(crate::market_orders::network_err)?;
 
     let status = resp.status().as_u16();
     let set_cookie_headers: Vec<String> = resp.headers().get_all("set-cookie").iter()
@@ -710,7 +510,7 @@ async fn try_proxy_tls(
 /// Emit a log line to both stderr (for `cargo run`) and the frontend
 /// `market-ws-log` event (for release builds without a console).
 fn ws_log(app: &tauri::AppHandle, msg: &str) {
-    eprintln!("[market_ws] {}", msg);
+    debug!("market_ws: {}", msg);
     let _ = app.emit("market-ws-log", msg.to_string());
 }
 
@@ -1086,13 +886,7 @@ struct CsrfContext {
 
 async fn fetch_csrf() -> Result<CsrfContext, MarketError> {
     let url = format!("{}/auth/signin", MARKET_WEB);
-    let resp = client().get(&url).send().await.map_err(|e| {
-        if e.is_timeout() {
-            MarketError { code: "network_timeout".into(), message: "连接 warframe.market 超时".into() }
-        } else {
-            MarketError { code: "network_timeout".into(), message: format!("网络错误: {}", e) }
-        }
-    })?;
+    let resp = client().get(&url).send().await.map_err(crate::market_orders::network_err)?;
     let status = resp.status().as_u16();
     let cookies: Vec<String> = resp.headers().get_all("set-cookie").iter()
         .filter_map(|v| v.to_str().ok().map(|s| s.to_string())).collect();
@@ -1144,9 +938,7 @@ async fn do_signin(
             "email": email.trim(), "password": password,
             "device_id": &device_id, "auth_type": "cookie",
         }))
-        .send().await.map_err(|_| MarketError {
-            code: "network_timeout".into(), message: "网络连接超时".into(),
-        })?;
+        .send().await.map_err(crate::market_orders::network_err)?;
 
     let status = resp.status().as_u16();
     let set_cookie_headers: Vec<String> = resp.headers().get_all("set-cookie").iter()
@@ -1318,63 +1110,4 @@ pub async fn market_set_status(
     })?;
 
     Ok(())
-}
-
-// ── base64url decoder ─────────────────────────────────────────────────────
-
-fn base64_url_decode(input: &str) -> Option<Vec<u8>> {
-    use std::collections::HashMap;
-    let alphabet: Vec<char> =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-            .chars()
-            .collect();
-    let mut char_to_val = HashMap::new();
-    for (i, c) in alphabet.iter().enumerate() {
-        char_to_val.insert(*c, i as u8);
-    }
-
-    let in_bytes: Vec<u8> = input.bytes().filter(|&b| b != b'=').collect();
-    let mut buf = vec![0u8; (in_bytes.len() * 3) / 4 + 4];
-    let n_blocks = in_bytes.len() / 4;
-    let mut write_pos = 0usize;
-
-    for block in 0..n_blocks {
-        let ni: Vec<u8> = in_bytes[block * 4..(block + 1) * 4]
-            .iter()
-            .filter_map(|b| char_to_val.get(&(*b as char)).copied())
-            .collect();
-        if ni.len() != 4 {
-            return None;
-        }
-        let triple =
-            (ni[0] as u32) << 18 | (ni[1] as u32) << 12 | (ni[2] as u32) << 6 | (ni[3] as u32);
-        buf[write_pos] = (triple >> 16) as u8;
-        write_pos += 1;
-        buf[write_pos] = (triple >> 8) as u8;
-        write_pos += 1;
-        buf[write_pos] = triple as u8;
-        write_pos += 1;
-    }
-
-    let rem = in_bytes.len() % 4;
-    if rem > 0 {
-        let mut ni: Vec<u8> = in_bytes[n_blocks * 4..]
-            .iter()
-            .filter_map(|b| char_to_val.get(&(*b as char)).copied())
-            .collect();
-        while ni.len() < 4 {
-            ni.push(0);
-        }
-        let triple =
-            (ni[0] as u32) << 18 | (ni[1] as u32) << 12 | (ni[2] as u32) << 6 | (ni[3] as u32);
-        buf[write_pos] = (triple >> 16) as u8;
-        write_pos += 1;
-        if rem >= 3 {
-            buf[write_pos] = (triple >> 8) as u8;
-            write_pos += 1;
-        }
-    }
-
-    buf.truncate(write_pos);
-    Some(buf)
 }

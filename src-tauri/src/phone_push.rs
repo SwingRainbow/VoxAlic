@@ -1,5 +1,16 @@
 use reqwest::Client;
+use std::sync::OnceLock;
 use std::time::Duration;
+
+fn push_client() -> &'static Client {
+    static CLIENT: OnceLock<Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .expect("push client")
+    })
+}
 
 /// POST a notification to the user's Bark endpoint. `bark_url` should be the
 /// full base URL copied from the Bark app (e.g. `https://api.day.app/xxx`).
@@ -11,12 +22,7 @@ pub async fn push(bark_url: &str, title: &str, body: &str) {
         pct_encode(title),
         pct_encode(body),
     );
-    if let Ok(client) = Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-    {
-        let _ = client.get(&url).send().await;
-    }
+    let _ = push_client().get(&url).send().await;
 }
 
 /// Percent-encode per RFC 3986: everything except unreserved chars

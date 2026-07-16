@@ -225,6 +225,9 @@ pub struct AppConfig {
     /// Market display language: "en" or "zh".
     #[serde(default = "default_market_language")]
     pub market_language: String,
+    /// Global hotkey string, e.g. "Alt+Shift+W". None = unset (disabled).
+    #[serde(default)]
+    pub hotkey: Option<String>,
 }
 
 fn default_update_source() -> String {
@@ -254,6 +257,7 @@ impl Default for AppConfig {
             notify_bark_url: String::new(),
             update_source: default_update_source(),
             market_language: default_market_language(),
+            hotkey: None,
         }
     }
 }

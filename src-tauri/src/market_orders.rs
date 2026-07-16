@@ -15,6 +15,7 @@ use crate::market::SharedMarketCache;
 use crate::market_auth::SharedMarketAuth;
 use crate::market_auth::ensure_valid_token;
 use crate::models::{MarketError, ProfileOrder, CreateOrderRequest, UpdateOrderRequest};
+use log::debug;
 use tauri::Manager;
 
 const MARKET_V2: &str = "https://api.warframe.market/v2";
@@ -22,17 +23,10 @@ const MARKET_V2: &str = "https://api.warframe.market/v2";
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 /// Map a `reqwest::Error` to a `MarketError`.
-fn map_reqwest_err(e: reqwest::Error) -> MarketError {
-    if e.is_timeout() || e.is_connect() {
-        MarketError {
-            code: "network_timeout".into(),
-            message: "网络连接超时，请检查网络后重试".into(),
-        }
-    } else {
-        MarketError {
-            code: "network_timeout".into(),
-            message: "网络连接超时，请检查网络后重试".into(),
-        }
+pub(crate) fn network_err(_e: reqwest::Error) -> MarketError {
+    MarketError {
+        code: "network_timeout".into(),
+        message: "网络连接超时，请检查网络后重试".into(),
     }
 }
 
@@ -239,7 +233,7 @@ pub async fn market_list_orders(
         .header("Platform", "pc")
         .send()
         .await
-        .map_err(map_reqwest_err)?;
+        .map_err(network_err)?;
 
     let status = resp.status().as_u16();
     let body_text = resp.text().await.unwrap_or_default();
@@ -328,11 +322,11 @@ pub async fn market_create_order(
         .json(&serde_json::Value::Object(body_map))
         .send()
         .await
-        .map_err(map_reqwest_err)?;
+        .map_err(network_err)?;
 
     let status = resp.status().as_u16();
     let body_text = resp.text().await.unwrap_or_default();
-    eprintln!(
+    debug!(
         "[market_orders] create_order status={} body[..300]={}",
         status,
         &body_text[..body_text.len().min(300)]
@@ -421,7 +415,7 @@ pub async fn market_update_order(
         .json(&serde_json::Value::Object(body_map))
         .send()
         .await
-        .map_err(map_reqwest_err)?;
+        .map_err(network_err)?;
 
     let status = resp.status().as_u16();
     let body_text = resp.text().await.unwrap_or_default();
@@ -470,7 +464,7 @@ pub async fn market_delete_order(
         .header("Platform", "pc")
         .send()
         .await
-        .map_err(map_reqwest_err)?;
+        .map_err(network_err)?;
 
     let status = resp.status().as_u16();
     let body_text = resp.text().await.unwrap_or_default();
@@ -509,7 +503,7 @@ pub async fn market_close_order(
         .header("Platform", "pc")
         .send()
         .await
-        .map_err(map_reqwest_err)?;
+        .map_err(network_err)?;
 
     let status = resp.status().as_u16();
     let body_text = resp.text().await.unwrap_or_default();

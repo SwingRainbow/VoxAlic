@@ -1,4 +1,5 @@
 use crate::models::{ArbitrationInfo, ArbitrationSlot, BaroInfo, BaroItem, BountyInfo, BountyJob, CircuitInfo, CycleInfo, Fissure, RewardItem, RewardRotation};
+use log::warn;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -737,14 +738,11 @@ pub fn parse_fissures(data: &Value) -> (Vec<Fissure>, Vec<Fissure>, Vec<Fissure>
 /// Find an active syndicate mission entry by tag and return a reference to it.
 fn find_active_syndicate<'a>(data: &'a Value, tag: &str) -> Option<&'a Value> {
     let arr = data["SyndicateMissions"].as_array()?;
-    let now = now_ms();
     for entry in arr {
-        if entry["Tag"].as_str() == Some(tag) {
-            let activation = get_ms(&entry["Activation"]);
-            let expiry = get_ms(&entry["Expiry"]);
-            if activation <= now && now < expiry {
-                return Some(entry);
-            }
+        if entry["Tag"].as_str() == Some(tag)
+            && is_active(&entry["Activation"], &entry["Expiry"])
+        {
+            return Some(entry);
         }
     }
     None
@@ -787,6 +785,25 @@ fn build_hex_cycle(def: &HexCycleDef, hex_expiry: i64) -> CycleInfo {
     }
 }
 
+/// Roll a cycle's expiry forward by whole `HEX_CYCLE_MS` periods until it is
+/// in the future, then clone the cycle and update its `remain_ms`/`remain_str`.
+/// Returns the clone and the rolled expiry (callers may need it for further
+/// computation such as faction derivation).
+fn roll_cycle_window(c: &CycleInfo, now: i64) -> Option<(CycleInfo, i64)> {
+    let mut exp = c.expiry_ms;
+    if exp <= 0 {
+        return None;
+    }
+    while exp <= now {
+        exp += HEX_CYCLE_MS;
+    }
+    let mut rolled = c.clone();
+    rolled.expiry_ms = exp;
+    rolled.remain_ms = exp - now;
+    rolled.remain_str = fmt_remain(exp - now);
+    Some((rolled, exp))
+}
+
 /// Self-heal a syndicate-based cycle (Plains/Cambion/Zariman) that has run past
 /// its stored phase-end, without waiting for the next 30-min API poll.
 ///
@@ -810,41 +827,16 @@ pub fn roll_forward_cycle(c: &CycleInfo, now: i64) -> Option<CycleInfo> {
             Some(build_hex_cycle(def, bounty_expiry))
         }
         "扎里曼" => {
-            // Roll the 150-min window forward until its end is in the future,
-            // then recompute the faction from the rolled window's activation
-            // (= its end − one period), since windows are contiguous.
-            let mut exp = c.expiry_ms;
-            if exp <= 0 {
-                return None;
-            }
-            while exp <= now {
-                exp += HEX_CYCLE_MS;
-            }
-            let mut rolled = c.clone();
+            let (mut rolled, exp) = roll_cycle_window(c, now)?;
             rolled.state = if zariman_is_corpus(exp - HEX_CYCLE_MS) {
                 "Corpus".to_string()
             } else {
                 "Grineer".to_string()
             };
-            rolled.expiry_ms = exp;
-            rolled.remain_ms = exp - now;
-            rolled.remain_str = fmt_remain(exp - now);
             Some(rolled)
         }
         "霍瓦尼亚" => {
-            // No state to recompute — just roll the refresh window forward.
-            let mut exp = c.expiry_ms;
-            if exp <= 0 {
-                return None;
-            }
-            while exp <= now {
-                exp += HEX_CYCLE_MS;
-            }
-            let mut rolled = c.clone();
-            rolled.expiry_ms = exp;
-            rolled.remain_ms = exp - now;
-            rolled.remain_str = fmt_remain(exp - now);
-            Some(rolled)
+            roll_cycle_window(c, now).map(|(rolled, _)| rolled)
         }
         _ => None,
     }
@@ -1269,53 +1261,24 @@ fn bounty_title(tag: &str, job_type: &str, min_level: i64) -> String {
 /// Pre-translated Cetus bounty reward pools, embedded at compile time.
 /// Shape: `{ "min-max": { "A": [RewardItem], "B": [...], "C": [...] } }`.
 type RewardTable = HashMap<String, HashMap<String, Vec<RewardItem>>>;
-static CETUS_REWARDS: OnceLock<RewardTable> = OnceLock::new();
-fn cetus_rewards() -> &'static RewardTable {
-    CETUS_REWARDS.get_or_init(|| {
-        serde_json::from_str(include_str!("../resources/cetus_bounty_rewards.json"))
-            .unwrap_or_default()
-    })
+
+macro_rules! static_resource {
+    ($static:ident, $fn:ident, $type:ty, $path:literal) => {
+        static $static: OnceLock<$type> = OnceLock::new();
+        fn $fn() -> &'static $type {
+            $static.get_or_init(|| {
+                serde_json::from_str(include_str!($path)).unwrap_or_default()
+            })
+        }
+    };
 }
 
-static SOLARIS_REWARDS: OnceLock<RewardTable> = OnceLock::new();
-fn solaris_rewards() -> &'static RewardTable {
-    SOLARIS_REWARDS.get_or_init(|| {
-        serde_json::from_str(include_str!("../resources/solaris_bounty_rewards.json"))
-            .unwrap_or_default()
-    })
-}
-
-static ZARIMAN_REWARDS: OnceLock<RewardTable> = OnceLock::new();
-fn zariman_rewards() -> &'static RewardTable {
-    ZARIMAN_REWARDS.get_or_init(|| {
-        serde_json::from_str(include_str!("../resources/zariman_bounty_rewards.json"))
-            .unwrap_or_default()
-    })
-}
-
-static DEIMOS_REWARDS: OnceLock<RewardTable> = OnceLock::new();
-fn deimos_rewards() -> &'static RewardTable {
-    DEIMOS_REWARDS.get_or_init(|| {
-        serde_json::from_str(include_str!("../resources/deimos_bounty_rewards.json"))
-            .unwrap_or_default()
-    })
-}
-
-static HEX_REWARDS: OnceLock<RewardTable> = OnceLock::new();
-fn hex_rewards() -> &'static RewardTable {
-    HEX_REWARDS.get_or_init(|| {
-        serde_json::from_str(include_str!("../resources/hex_bounty_rewards.json"))
-            .unwrap_or_default()
-    })
-}
-
-static ENTRATI_LAB_REWARDS: OnceLock<RewardTable> = OnceLock::new();
-fn entrati_lab_rewards() -> &'static RewardTable {
-    ENTRATI_LAB_REWARDS.get_or_init(|| {
-        serde_json::from_str(include_str!("../resources/entrati_lab_bounty_rewards.json"))
-            .unwrap_or_default()
-    })
-}
+static_resource!(CETUS_REWARDS,       cetus_rewards,       RewardTable, "../resources/cetus_bounty_rewards.json");
+static_resource!(SOLARIS_REWARDS,     solaris_rewards,     RewardTable, "../resources/solaris_bounty_rewards.json");
+static_resource!(ZARIMAN_REWARDS,     zariman_rewards,     RewardTable, "../resources/zariman_bounty_rewards.json");
+static_resource!(DEIMOS_REWARDS,      deimos_rewards,      RewardTable, "../resources/deimos_bounty_rewards.json");
+static_resource!(HEX_REWARDS,         hex_rewards,         RewardTable, "../resources/hex_bounty_rewards.json");
+static_resource!(ENTRATI_LAB_REWARDS, entrati_lab_rewards, RewardTable, "../resources/entrati_lab_bounty_rewards.json");
 
 /// Pick the embedded reward table for a syndicate tag.
 fn rewards_for(tag: &str) -> &'static RewardTable {
@@ -1615,16 +1578,10 @@ pub fn parse_void_trader(data: &Value) -> Vec<BaroInfo> {
 // 6c. DUVIRI CIRCUIT (无限回廊)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Circuit choice token → 简中 display name, pre-generated offline via
-/// `_gen_circuit.py` (name→uniqueName→baro_zh). Warframe tokens resolve to their
-/// English name (the CN client doesn't translate Warframe names). Embedded.
-static CIRCUIT_NAMES: OnceLock<HashMap<String, String>> = OnceLock::new();
-fn circuit_names() -> &'static HashMap<String, String> {
-    CIRCUIT_NAMES.get_or_init(|| {
-        serde_json::from_str(include_str!("../resources/circuit_names.json"))
-            .unwrap_or_default()
-    })
-}
+// Circuit choice token → 简中 display name, pre-generated offline via
+// `_gen_circuit.py` (name→uniqueName→baro_zh). Warframe tokens resolve to their
+// English name (the CN client doesn't translate Warframe names). Embedded.
+static_resource!(CIRCUIT_NAMES, circuit_names, HashMap<String, String>, "../resources/circuit_names.json");
 
 /// Resolve a worldState `EndlessXpChoices` token (e.g. "Soma", "NamiSolo") to a
 /// display name; falls back to the raw token when unmapped.
@@ -1825,12 +1782,12 @@ pub async fn fetch_worldstate(source: &str) -> Result<Value, String> {
             match resp.json::<Value>().await {
                 Ok(json) => return Ok(json),
                 Err(_e) => {
-                    eprintln!("worldstate primary parse error: {_e}, trying fallback");
+                    warn!("worldstate primary parse error: {_e}, trying fallback");
                 }
             }
         }
         Err(_e) => {
-            eprintln!("worldstate primary fetch error: {_e}, trying fallback");
+            warn!("worldstate primary fetch error: {_e}, trying fallback");
         }
     }
 
