@@ -130,8 +130,15 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   overflow: hidden;
+  max-height: 3000px;
+  opacity: 1;
+  transition: max-height 0.25s ease, opacity 0.2s ease, margin-top 0.25s ease;
 }
-.bounty-panel.hidden { display: none; }
+.bounty-panel.hidden {
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
+}
 .bounty-section + .bounty-section { border-top: 3px solid var(--bg); }
 .bounty-card-head {
   display: flex;
@@ -626,6 +633,40 @@ tr.expiring td:last-child { color: var(--warn); font-weight: bold; }
   flex: 1;
   min-width: 200px;
 }
+/* Hotkey capture */
+.hotkey-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.hotkey-input {
+  width: 180px;
+  padding: 4px 8px;
+  font-size: 13px;
+  font-family: 'Consolas', monospace;
+  text-align: center;
+  border: 1px solid #444;
+  border-radius: 4px;
+  background: #1a1a1a;
+  color: var(--text);
+  cursor: pointer;
+}
+.hotkey-input:focus {
+  border-color: var(--accent);
+  outline: none;
+  background: #222;
+}
+.hotkey-input::placeholder {
+  color: #555;
+  font-family: inherit;
+}
+.settings-hint {
+  font-size: 11px;
+  color: #555;
+  margin-top: 2px;
+  margin-left: 96px;
+}
 /* Custom-reminder popup */
 .modal-overlay {
   position: fixed;
@@ -924,8 +965,18 @@ tr.expiring td:last-child { color: var(--warn); font-weight: bold; }
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 14px;
+  max-height: 5000px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height 0.25s ease, opacity 0.2s ease, margin-top 0.25s ease;
 }
-.market-detail.hidden { display: none; }
+.market-detail.hidden {
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
 
 .market-detail-head {
   display: flex;
@@ -1405,6 +1456,7 @@ tr.expiring td:last-child { color: var(--warn); font-weight: bold; }
 }
 .calib-summary::-webkit-details-marker { display: none; }
 .calib-summary::before { content: '▸'; color: var(--dim); margin-right: 6px; font-size: 11px; }
+.calib-summary:hover { color: var(--text); }
 .calib-panel[open] .calib-summary::before { content: '▾'; }
 .calib-body { padding: 0 14px 12px; }
 .calib-mode-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
@@ -1953,4 +2005,118 @@ tr.expiring td:last-child { color: var(--warn); font-weight: bold; }
 .my-order-row.flash-error {
   animation: flash-red 0.6s ease-out;
   border-radius: 4px;
+}
+
+/* ── Press-down feedback ──
+   Instant scale-down on press (no transition — feels snappy like a physical
+   button). The static :active pseudo-class gives a 4% shrink while held. */
+.tab-btn:active,
+.sub-tab-btn:active,
+.timer-btn:active,
+.timer-btn-sm:active,
+.bounty-close:active,
+.rot-btn:active,
+.market-result-row:active,
+.set-part-link:active,
+.btn-backtop:active,
+.btn-whisper:active,
+.auth-status-opt:active,
+.auth-logout-btn:active,
+.translate-row:active,
+.market-my-orders-summary:active,
+.calib-summary:active,
+.btn-danger:active,
+.market-auth-chip:active,
+.login-pass-toggle:active {
+  transform: scale(0.96);
+}
+
+/* Small inline buttons — lighter feedback than full-size buttons. */
+.my-order-actions button:active,
+.btn-qty:active,
+.market-detail-actions button:active {
+  filter: brightness(0.92);
+}
+
+/* Cards are large surfaces — scale-down feels wrong. A subtle
+   brightness dip on press is more natural. */
+.cycle-card.clickable:active,
+.arb-card.clickable:active,
+.baro-panel.clickable:active {
+  filter: brightness(0.92);
+}
+
+/* ── Panel slide-in (for elements created fresh in the DOM) ── */
+@keyframes panelSlideIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.baro-table-wrap {
+  animation: panelSlideIn 0.25s ease forwards;
+}
+.arb-upcoming {
+  animation: panelSlideIn 0.2s ease forwards;
+  overflow: hidden;
+}
+
+/* ── Skeleton loading ── */
+.cycle-card-skel {
+  padding: 13px 14px;
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.skel-line {
+  height: 12px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  animation: marketPulse 1.2s ease-in-out infinite;
+}
+.skel-line.w60 { width: 60%; }
+.skel-line.w80 { width: 80%; }
+.skel-line.w40 { width: 40%; }
+.skel-line.w100 { width: 100%; }
+
+/* Search-result skeleton row */
+.market-skel-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+}
+.market-skel-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  animation: marketPulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+/* First-launch loading hint (lightweight fallback) */
+.loading-hint {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 40px 0;
+  color: var(--dim);
+  font-size: 13px;
+}
+.loading-hint::before {
+  content: '⏳';
+  display: block;
+  font-size: 24px;
+  margin-bottom: 8px;
+  animation: marketPulse 1.2s ease-in-out infinite;
+}
+
+/* Image fade-in after load */
+.market-result-icon {
+  transition: opacity 0.3s;
+}
+.market-result-icon.loaded {
+  animation: none;
+  background: rgba(0, 0, 0, 0.25);
 }
