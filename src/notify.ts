@@ -35,8 +35,8 @@ function render(list: SubNotify[]) {
     el.innerHTML = '<div class="np-empty">暂无提醒</div>';
     return;
   }
-  el.innerHTML = list.map(n => `
-    <div class="np-item np-${esc(n.kind)}" data-kind="${esc(n.kind)}" data-node="${esc(n.node)}" data-sub="${esc(n.sub)}">
+  el.innerHTML = list.map((n, i) => `
+    <div class="np-item np-${esc(n.kind)}" style="--ni:${i}" data-kind="${esc(n.kind)}" data-node="${esc(n.node)}" data-sub="${esc(n.sub)}">
       ${n.icon ? `<div class="np-icon">${esc(n.icon)}</div>` : ''}
       <div class="np-body">
         <div class="np-title">${esc(n.title)}</div>

@@ -63,8 +63,13 @@ body {
   background: var(--bg);
 }
 
-.tab-content { display: none; flex: 1; overflow-y: auto; padding: 12px; }
-.tab-content.active { display: block; }
+.tab-content { display: none; flex: 1; overflow-y: auto; padding: 12px; scroll-behavior: smooth; }
+.tab-content.active { display: block; animation: tabFadeIn 0.2s ease; }
+
+@keyframes tabFadeIn {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
 /* ── Cycle Cards ── */
 #cycle-cards {
@@ -107,6 +112,7 @@ body {
   color: #ffd27a;
   font-weight: 600;
   font-family: 'Consolas', monospace;
+  transition: color 0.3s;
 }
 
 /* clickable (has bounties) */
@@ -407,6 +413,7 @@ body {
   font-weight: 600;
   color: #ffd27a;
   font-family: 'Consolas', monospace;
+  transition: color 0.3s;
 }
 .baro-wait-note {
   margin-top: 8px;
@@ -587,7 +594,7 @@ td {
   font-size: 13px;
 }
 .relic-icon { width: 22px; height: 14px; vertical-align: middle; margin-right: 4px; object-fit: contain; }
-tr.expiring td:last-child { color: var(--warn); font-weight: bold; }
+tr.expiring td:last-child { color: var(--warn); font-weight: bold; transition: color 0.3s; }
 
 /* 订阅命中的裂缝行高亮（品牌金）—— 与筛选互不冲突，仅作标注 */
 #fissure-table tr.subscribed { outline: 1px solid rgba(255, 185, 41, 0.45); outline-offset: -1px; }
@@ -676,8 +683,13 @@ tr.expiring td:last-child { color: var(--warn); font-weight: bold; }
   align-items: center;
   justify-content: center;
   z-index: 1000;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
 }
-.modal-overlay.hidden { display: none; }
+.modal-overlay.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
 .modal-box {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -688,6 +700,10 @@ tr.expiring td:last-child { color: var(--warn); font-weight: bold; }
   flex-direction: column;
   gap: 12px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  transition: transform 0.2s ease;
+}
+.modal-overlay.hidden .modal-box {
+  transform: scale(0.95);
 }
 .modal-title { font-size: 15px; font-weight: 600; color: var(--text); }
 .modal-hint { font-size: 12px; color: var(--dim); line-height: 1.5; }
@@ -864,8 +880,13 @@ tr.expiring td:last-child { color: var(--warn); font-weight: bold; }
   max-height: 220px;
   overflow-y: auto;
   z-index: 20;
+  transition: opacity 0.15s ease, visibility 0.15s ease;
 }
-.translate-results.hidden { display: none; }
+.translate-results.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
 .translate-row {
   display: flex;
   gap: 8px;
@@ -1486,6 +1507,36 @@ tr.expiring td:last-child { color: var(--warn); font-weight: bold; }
   50% { opacity: 0.4; }
 }
 
+/* Error shake */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(2px); }
+}
+.login-status.error { color: #e06c6c; background: rgba(224, 108, 108, 0.1); animation: shake 0.4s ease; }
+
+/* Order row stagger */
+@keyframes orderRowIn {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.market-order-table tbody tr {
+  animation: orderRowIn 0.22s ease both;
+  animation-delay: calc(var(--i, 0) * 0.025s);
+}
+
+/* Tray notification stagger */
+@keyframes npItemIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.np-item {
+  animation: npItemIn 0.2s ease both;
+  animation-delay: calc(var(--ni, 0) * 0.04s);
+}
+
 /* ── Market Auth & Orders ─────────────────────────────────────────────────── */
 
 /* Auth chip in search bar */
@@ -1633,8 +1684,14 @@ tr.expiring td:last-child { color: var(--warn); font-weight: bold; }
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   z-index: 1001;
   padding: 6px 0;
+  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s ease;
 }
-.auth-dropdown.hidden { display: none; }
+.auth-dropdown.hidden {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-6px);
+  pointer-events: none;
+}
 
 .auth-dropdown-header {
   display: flex;

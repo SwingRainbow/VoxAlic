@@ -23,9 +23,9 @@ let _lazySellSort: SortState = { key: 'price', dir: 'asc' };
 let _lazyBuySort: SortState = { key: 'price', dir: 'desc' };
 let _lazyObservers: IntersectionObserver[] = [];
 
-export function orderRowHTML(o: MarketOrder): string {
+export function orderRowHTML(o: MarketOrder, i: number): string {
   const rankCol = _lazyMaxRank ? `<td class="rank-cell">${o.mod_rank != null ? `${o.mod_rank} of ${_lazyMaxRank}` : '--'}</td>` : '';
-  return `<tr>
+  return `<tr style="--i:${i}">
     <td class="player" title="${o.player_name}">${o.player_name}</td>
     <td class="status-cell">${statusLabel(o.status)}</td>
     <td class="rep-cell"><span class="rep-badge ${repClass(o.reputation)}">${o.reputation >= 0 ? '+' : ''}${o.reputation}</span></td>${rankCol}
@@ -90,7 +90,7 @@ export function loadMoreOrders(side: 'sell' | 'buy') {
   const oldSentinel = document.getElementById(sentinelId);
   if (oldSentinel) oldSentinel.remove();
 
-  tbody.insertAdjacentHTML('beforeend', batch.map(orderRowHTML).join(''));
+  tbody.insertAdjacentHTML('beforeend', batch.map((o, i) => orderRowHTML(o, i + rendered)).join(''));
 
   if (side === 'sell') _lazySellCount += batch.length;
   else _lazyBuyCount += batch.length;
