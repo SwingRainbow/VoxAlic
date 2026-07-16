@@ -1,6 +1,7 @@
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 import {
   type AppStatePayload, type AppConfig, type MarketItemSummary,
@@ -891,4 +892,54 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // ── ROI calibration ──
   setupCalibration();
+
+  // ── Contact: open log folder ──
+  (window as any)._openLogFolder = () => { invoke('open_log_folder').catch(() => {}); };
+
+  // ── Feedback modal ──
+  const feedbackModal = document.getElementById('feedback-modal')!;
+  const feedbackMsg = document.getElementById('feedback-msg') as HTMLTextAreaElement;
+  const feedbackQStatus = document.getElementById('feedback-q-status')!;
+  const btnSendFeedback = document.getElementById('btn-send-feedback') as HTMLButtonElement;
+
+  // Open modal: check QQ status first
+  document.getElementById('btn-open-feedback')!.addEventListener('click', async () => {
+    feedbackModal.classList.remove('hidden');
+    feedbackMsg.value = '';
+    feedbackMsg.focus();
+    feedbackQStatus.className = 'qq-status loading';
+    feedbackQStatus.textContent = '检测中…';
+    try {
+      const qqOn = await invoke<boolean>('check_qq_running');
+      if (qqOn) {
+        feedbackQStatus.className = 'qq-status on';
+        feedbackQStatus.textContent = '✅ QQ 已登录';
+      } else {
+        feedbackQStatus.className = 'qq-status off';
+        feedbackQStatus.textContent = '⚠ QQ 未登录，请登录后发送';
+      }
+    } catch {
+      feedbackQStatus.className = 'qq-status off';
+      feedbackQStatus.textContent = '⚠ QQ 未登录，请登录后发送';
+    }
+  });
+
+  document.getElementById('btn-close-feedback')!.addEventListener('click', () => {
+    feedbackModal.classList.add('hidden');
+  });
+  feedbackModal.addEventListener('click', (e) => {
+    if (e.target === feedbackModal) feedbackModal.classList.add('hidden');
+  });
+
+  // Send: copy message → open QQ via opener plugin
+  btnSendFeedback.addEventListener('click', async () => {
+    const msg = feedbackMsg.value.trim();
+    if (!msg) return;
+    await navigator.clipboard.writeText(msg);
+    const orig = btnSendFeedback.textContent!;
+    btnSendFeedback.textContent = '✅ 已复制，正在打开 QQ…';
+    btnSendFeedback.disabled = true;
+    try { await openUrl('tencent://message/?uin=1098905880&Site=VoxAlic&Menu=yes'); } catch { /* ignore */ }
+    setTimeout(() => { btnSendFeedback.textContent = orig; btnSendFeedback.disabled = false; }, 2500);
+  });
 });

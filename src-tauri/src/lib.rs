@@ -998,6 +998,27 @@ fn game_data_version() -> &'static str {
     GAME_DATA_VERSION
 }
 
+/// Open the log file's directory in Explorer (设置 → 联系作者).
+#[tauri::command]
+fn open_log_folder(app: tauri::AppHandle) -> Result<(), String> {
+    let path = app.path().app_data_dir().map_err(|e| e.to_string())?.join("voxalic.log");
+    let _ = std::process::Command::new("explorer")
+        .arg("/select,")
+        .arg(path.to_str().unwrap_or(""))
+        .spawn();
+    Ok(())
+}
+
+/// Check whether QQ is running (设置 → 联系作者 → 反馈弹窗).
+#[tauri::command]
+fn check_qq_running() -> bool {
+    std::process::Command::new("tasklist")
+        .args(["/fi", "IMAGENAME eq QQ.exe", "/nh"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("QQ.exe"))
+        .unwrap_or(false)
+}
+
 /// Current accumulated subscription notifications (newest first) for the popup.
 #[tauri::command]
 fn get_notifications(list: tauri::State<'_, NotifyList>) -> Vec<SubNotify> {
@@ -1706,7 +1727,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, get_hotkey, set_hotkey, timer_command, list_windows, select_window, single_capture, capture_preview, test_recognize, test_alert, update_item_names, item_names_count, game_data_version, get_notifications, clear_notifications, open_main_navigate, get_autostart, set_autostart, uninstall_clean, check_for_update, install_update, get_bark_url, test_phone_push, search_market_items, get_market_item, refresh_market_cache, market_cache_status, translate_items, market_signin, market_signout, market_auth_status, market_set_status, market_list_orders, market_create_order, market_update_order, market_delete_order, market_close_order])
+        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, get_hotkey, set_hotkey, timer_command, list_windows, select_window, single_capture, capture_preview, test_recognize, test_alert, update_item_names, item_names_count, game_data_version, open_log_folder, check_qq_running, get_notifications, clear_notifications, open_main_navigate, get_autostart, set_autostart, uninstall_clean, check_for_update, install_update, get_bark_url, test_phone_push, search_market_items, get_market_item, refresh_market_cache, market_cache_status, translate_items, market_signin, market_signout, market_auth_status, market_set_status, market_list_orders, market_create_order, market_update_order, market_delete_order, market_close_order])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
