@@ -986,7 +986,17 @@ async fn do_signin(
         }
         429 => Err(MarketError { code: "rate_limited".into(), message: "请求过于频繁".into() }),
         c if c >= 500 => Err(MarketError { code: "server_error".into(), message: "Warframe.Market 服务暂时不可用".into() }),
-        _ => Err(MarketError { code: "unknown".into(), message: format!("登录失败 (HTTP {})", status) }),
+        _ => {
+            // Include the response body in 4xx errors so we can see what the server complains about.
+            let hint = if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body_text) {
+                v["error"].as_str().or(v["message"].as_str())
+                    .unwrap_or(&body_text)
+                    .to_string()
+            } else {
+                body_text.chars().take(120).collect()
+            };
+            Err(MarketError { code: "unknown".into(), message: format!("登录失败 (HTTP {})：{}", status, hint) })
+        }
     }
 }
 
