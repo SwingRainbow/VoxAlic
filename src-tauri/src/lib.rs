@@ -1040,22 +1040,14 @@ fn open_qq_chat(uin: String) -> bool {
 
 /// Gather system diagnostics for feedback emails (Windows only).
 fn collect_diagnostics() -> String {
-    // Pull OS, hardware, locale, WebView2 in a single PowerShell invocation.
     let raw = std::process::Command::new("powershell")
         .args(["-NoProfile", "-NoLogo", "-Command", r#"
-$os   = Get-CimInstance Win32_OperatingSystem
-$cs   = Get-CimInstance Win32_ComputerSystem
-$cpu  = Get-CimInstance Win32_Processor | Select -First 1
-$gpu  = Get-CimInstance Win32_VideoController | Where {$_.Name -notlike "*Virtual*" -and $_.Name -notlike "*Remote*"} | Select -First 1
-$c    = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
-$ram    = [math]::Round($cs.TotalPhysicalMemory / 1GB)
-$cfree  = [math]::Round($c.FreeSpace / 1GB)
-$ctotal = [math]::Round($c.Size / 1GB)
-$tz     = (Get-TimeZone).Id
-$wv2    = (Get-Item "$env:ProgramFiles\Microsoft\EdgeWebView\Application\msedgewebview2.exe" -ErrorAction SilentlyContinue).VersionInfo.ProductVersion
-if (-not $wv2) { $wv2 = "-" }
-$loc    = (Get-Culture).Name
-Write-Output "$($os.Caption.Trim())|$($os.Version)|$($os.OSArchitecture)|$loc|$($cs.Manufacturer.Trim())|$($cs.Model.Trim())|$($cpu.Name.Trim())|${ram}GB|$($gpu.Name.Trim())|$($gpu.DriverVersion)|C: ${cfree}GB / ${ctotal}GB|$tz|$wv2"
+$os  = Get-CimInstance Win32_OperatingSystem
+$cpu = Get-CimInstance Win32_Processor | Select -First 1
+$gpu = Get-CimInstance Win32_VideoController | Where {$_.Name -notlike "*Virtual*" -and $_.Name -notlike "*Remote*"} | Select -First 1
+$loc = (Get-Culture).Name
+$tz  = (Get-TimeZone).Id
+Write-Output "$($os.Caption.Trim())|$($os.Version)|$($os.OSArchitecture)|$loc|$tz|$($cpu.Name.Trim())|$($gpu.Name.Trim())|$($gpu.DriverVersion)"
 "#.trim()])
         .output()
         .ok()
@@ -1065,45 +1057,22 @@ Write-Output "$($os.Caption.Trim())|$($os.Version)|$($os.OSArchitecture)|$loc|$(
         })
         .unwrap_or_default();
 
-    let mut p = raw.splitn(13, '|');
+    let mut p = raw.splitn(8, '|');
     let os_name = p.next().filter(|s| !s.is_empty()).unwrap_or("Windows");
     let os_ver  = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
     let os_arch = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
     let locale  = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
-    let vendor  = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
-    let model   = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
+    let tz      = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
     let cpu     = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
-    let ram     = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
     let gpu     = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
     let gpu_drv = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
-    let disk    = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
-    let tz      = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
-    let wv2     = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
-
-    // Screen / DPI / monitor count via Win32 (quicker than another PS roundtrip).
-    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN, SM_CMONITORS};
-    let sw = unsafe { GetSystemMetrics(SM_CXSCREEN) };
-    let sh = unsafe { GetSystemMetrics(SM_CYSCREEN) };
-    let monitors = unsafe { GetSystemMetrics(SM_CMONITORS) };
-
-    use windows::Win32::Graphics::Gdi::{GetDC, GetDeviceCaps, LOGPIXELSX, ReleaseDC};
-    let dpi = unsafe {
-        let dc = GetDC(None);
-        let d = if dc.is_invalid() { 96 } else { GetDeviceCaps(dc, LOGPIXELSX) as u32 };
-        if !dc.is_invalid() { let _ = ReleaseDC(None, dc); }
-        d
-    };
 
     format!(
-        "设备：{vendor} {model}\n\
-         操作系统：{os_name} ({os_ver}) {os_arch}\n\
-         系统语言：{locale}  时区：{tz}\n\
+        "操作系统：{os_name} ({os_ver}) {os_arch}\n\
+         系统语言：{locale}\n\
+         时区：{tz}\n\
          CPU：{cpu}\n\
-         内存：{ram}\n\
-         显卡：{gpu}（驱动 {gpu_drv}）\n\
-         屏幕：{sw}x{sh} @ {dpi}% DPI（{monitors} 个显示器）\n\
-         磁盘 C:：{disk}\n\
-         WebView2：{wv2}",
+         显卡：{gpu}（驱动 {gpu_drv}）",
     )
 }
 
