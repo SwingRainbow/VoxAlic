@@ -34,6 +34,7 @@ windows = { version = "0.58", features = [
     "Win32_Graphics_Dwm",
     "Win32_System_Registry",
     "Win32_System_Diagnostics_ToolHelp",
+    "Win32_UI_Shell",
 ] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 tauri-plugin-updater = "2.10.1"
@@ -43,6 +44,7 @@ url = "2"
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 futures-util = "0.3"
 tokio-native-tls = "0.3"
+lettre = { version = "0.11", default-features = false, features = ["tokio1-native-tls", "smtp-transport", "builder"] }
 flate2 = "1"
 log = "0.4"
 base64 = "0.22"

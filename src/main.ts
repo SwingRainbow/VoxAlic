@@ -1,7 +1,7 @@
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
-import { openUrl } from '@tauri-apps/plugin-opener';
+// import { openUrl } kept as dependency-free backup — no longer used; remove when confirmed
 
 import {
   type AppStatePayload, type AppConfig, type MarketItemSummary,
@@ -899,29 +899,16 @@ window.addEventListener('DOMContentLoaded', () => {
   // ── Feedback modal ──
   const feedbackModal = document.getElementById('feedback-modal')!;
   const feedbackMsg = document.getElementById('feedback-msg') as HTMLTextAreaElement;
-  const feedbackQStatus = document.getElementById('feedback-q-status')!;
   const btnSendFeedback = document.getElementById('btn-send-feedback') as HTMLButtonElement;
+  const feedbackSendStatus = document.getElementById('feedback-send-status')!;
 
-  // Open modal: check QQ status first
-  document.getElementById('btn-open-feedback')!.addEventListener('click', async () => {
+  // Open modal
+  document.getElementById('btn-open-feedback')!.addEventListener('click', () => {
     feedbackModal.classList.remove('hidden');
     feedbackMsg.value = '';
+    feedbackSendStatus.textContent = '';
+    feedbackSendStatus.className = 'feedback-send-status';
     feedbackMsg.focus();
-    feedbackQStatus.className = 'qq-status loading';
-    feedbackQStatus.textContent = '检测中…';
-    try {
-      const qqOn = await invoke<boolean>('check_qq_running');
-      if (qqOn) {
-        feedbackQStatus.className = 'qq-status on';
-        feedbackQStatus.textContent = '✅ QQ 已登录';
-      } else {
-        feedbackQStatus.className = 'qq-status off';
-        feedbackQStatus.textContent = '⚠ QQ 未登录，请登录后发送';
-      }
-    } catch {
-      feedbackQStatus.className = 'qq-status off';
-      feedbackQStatus.textContent = '⚠ QQ 未登录，请登录后发送';
-    }
   });
 
   document.getElementById('btn-close-feedback')!.addEventListener('click', () => {
@@ -931,15 +918,49 @@ window.addEventListener('DOMContentLoaded', () => {
     if (e.target === feedbackModal) feedbackModal.classList.add('hidden');
   });
 
-  // Send: copy message → open QQ via opener plugin
+  // Send: Layer 1 SMTP → Layer 2 tencent:// → Layer 3 clipboard fallback
   btnSendFeedback.addEventListener('click', async () => {
     const msg = feedbackMsg.value.trim();
     if (!msg) return;
-    await navigator.clipboard.writeText(msg);
-    const orig = btnSendFeedback.textContent!;
-    btnSendFeedback.textContent = '✅ 已复制，正在打开 QQ…';
+
+    // Step 0: copy to clipboard FIRST — content is never lost regardless of outcome.
+    try { await navigator.clipboard.writeText(msg); } catch { /* ignore */ }
+
+    // Disable button during send to prevent double-click.
     btnSendFeedback.disabled = true;
-    try { await openUrl('tencent://message/?uin=1098905880&Site=VoxAlic&Menu=yes'); } catch { /* ignore */ }
-    setTimeout(() => { btnSendFeedback.textContent = orig; btnSendFeedback.disabled = false; }, 2500);
+    btnSendFeedback.textContent = '发送中…';
+    feedbackSendStatus.textContent = '正在发送…';
+    feedbackSendStatus.className = 'feedback-send-status sending';
+
+    // ── Layer 1: SMTP ──
+    try {
+      await invoke('send_feedback', { message: msg });
+      // Success — done.
+      feedbackSendStatus.textContent = '✅ 已发送，感谢反馈！';
+      feedbackSendStatus.className = 'feedback-send-status success';
+      setTimeout(() => { feedbackModal.classList.add('hidden'); }, 2000);
+      return;
+    } catch (_e) {
+      // SMTP failed — silently fall through to Layer 2.
+    }
+
+    // ── Layer 2: tencent:// (ShellExecuteW) ──
+    feedbackSendStatus.textContent = '正在尝试打开 QQ…';
+    try {
+      const ok = await invoke<boolean>('open_qq_chat', { uin: '1098905880' });
+      if (ok) {
+        feedbackSendStatus.textContent = '📋 已复制到剪贴板，请粘贴到 QQ 对话框发送';
+        feedbackSendStatus.className = 'feedback-send-status success';
+        btnSendFeedback.disabled = false;
+        btnSendFeedback.textContent = '📤 发送';
+        return;
+      }
+    } catch { /* fall through to Layer 3 */ }
+
+    // ── Layer 3: pure clipboard ──
+    feedbackSendStatus.innerHTML = '📋 已复制到剪贴板，请手动打开 QQ 粘贴给 <b>1098905880</b>';
+    feedbackSendStatus.className = 'feedback-send-status error';
+    btnSendFeedback.disabled = false;
+    btnSendFeedback.textContent = '📤 发送';
   });
 });

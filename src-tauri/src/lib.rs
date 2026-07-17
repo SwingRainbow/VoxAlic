@@ -37,6 +37,15 @@ use tauri::{
 
 const REFRESH_SEC: u32 = 300;
 
+// ── SMTP feedback credentials ─────────────────────────────────────────────────
+// ⚠️ 提交代码前确认 SMTP_AUTH_CODE 不是真实授权码。
+//    授权码泄露的唯一后果：攻击者可向此邮箱发垃圾邮件。
+//    补救：登录 mail.qq.com → 重置授权码（旧码即刻失效）。
+const SMTP_USER: &str = "1098905880@qq.com";
+const SMTP_AUTH_CODE: &str = "rbjtvjiifewugiig";
+const SMTP_TO: &str = "1098905880@qq.com";
+const SMTP_TIMEOUT_SECS: u64 = 10;
+
 // ── Subscription notifications ───────────────────────────────────────────────
 
 /// A fired subscription, surfaced via the tray red-dot + click popup (NOT a
@@ -1009,14 +1018,80 @@ fn open_log_folder(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Check whether QQ is running (设置 → 联系作者 → 反馈弹窗).
+/// Open a QQ chat window via tencent:// protocol (uses ShellExecuteW directly,
+/// bypassing WebView2 protocol restrictions).
 #[tauri::command]
-fn check_qq_running() -> bool {
-    std::process::Command::new("tasklist")
-        .args(["/fi", "IMAGENAME eq QQ.exe", "/nh"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("QQ.exe"))
-        .unwrap_or(false)
+fn open_qq_chat(uin: String) -> bool {
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOW;
+    use windows::Win32::Foundation::HINSTANCE;
+    use windows::core::HSTRING;
+
+    let url = format!("tencent://message/?uin={uin}&Site=VoxAlic&Menu=yes");
+    let url_hstring = HSTRING::from(&url);
+
+    // HINSTANCE > 32 means success (per Win32 convention)
+    unsafe {
+        let ret: HINSTANCE = ShellExecuteW(
+            None,
+            windows::core::w!("open"),
+            &url_hstring,
+            None,
+            None,
+            SW_SHOW,
+        );
+        (ret.0 as isize) > 32
+    }
+}
+
+/// Send user feedback via SMTP to the developer's QQ mailbox.
+/// Uses the existing tokio runtime (same as the rest of the app).
+#[tauri::command]
+async fn send_feedback(message: String) -> Result<String, String> {
+    use lettre::message::Message;
+    use lettre::{AsyncTransport, Tokio1Executor};
+    use lettre::transport::smtp::{AsyncSmtpTransport, authentication::Credentials};
+
+    let app_version = env!("CARGO_PKG_VERSION");
+    let body = format!(
+        "【VoxAlic 用户反馈】\n\
+         ───────────────────\n\
+         {}\n\
+         ───────────────────\n\
+         版本：{}\n\
+         平台：{} {}\n\
+         时间：{}",
+        message,
+        app_version,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
+    );
+
+    let email = Message::builder()
+        .from(SMTP_USER.parse().map_err(|e| format!("发件人格式错误：{e}"))?)
+        .to(SMTP_TO.parse().map_err(|e| format!("收件人格式错误：{e}"))?)
+        .subject(format!("[VoxAlic v{app_version}] 用户反馈"))
+        .body(body)
+        .map_err(|e| format!("邮件构建失败：{e}"))?;
+
+    let mailer = AsyncSmtpTransport::<Tokio1Executor>::relay("smtp.qq.com")
+        .map_err(|e| format!("SMTP 地址解析失败：{e}"))?
+        .credentials(Credentials::new(
+            SMTP_USER.to_string(),
+            SMTP_AUTH_CODE.to_string(),
+        ))
+        .build();
+
+    tokio::time::timeout(
+        std::time::Duration::from_secs(SMTP_TIMEOUT_SECS),
+        mailer.send(email),
+    )
+    .await
+    .map_err(|_| "发送超时，请检查网络连接".to_string())?
+    .map_err(|e| format!("发送失败：{e}"))?;
+
+    Ok("ok".to_string())
 }
 
 /// Current accumulated subscription notifications (newest first) for the popup.
@@ -1727,7 +1802,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, get_hotkey, set_hotkey, timer_command, list_windows, select_window, single_capture, capture_preview, test_recognize, test_alert, update_item_names, item_names_count, game_data_version, open_log_folder, check_qq_running, get_notifications, clear_notifications, open_main_navigate, get_autostart, set_autostart, uninstall_clean, check_for_update, install_update, get_bark_url, test_phone_push, search_market_items, get_market_item, refresh_market_cache, market_cache_status, translate_items, market_signin, market_signout, market_auth_status, market_set_status, market_list_orders, market_create_order, market_update_order, market_delete_order, market_close_order])
+        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, get_hotkey, set_hotkey, timer_command, list_windows, select_window, single_capture, capture_preview, test_recognize, test_alert, update_item_names, item_names_count, game_data_version, open_log_folder, open_qq_chat, send_feedback, get_notifications, clear_notifications, open_main_navigate, get_autostart, set_autostart, uninstall_clean, check_for_update, install_update, get_bark_url, test_phone_push, search_market_items, get_market_item, refresh_market_cache, market_cache_status, translate_items, market_signin, market_signout, market_auth_status, market_set_status, market_list_orders, market_create_order, market_update_order, market_delete_order, market_close_order])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

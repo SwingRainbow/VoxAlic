@@ -438,12 +438,11 @@
   <div id="feedback-modal" class="modal-overlay hidden">
     <div class="modal-box">
       <div class="modal-title">📤 发送反馈</div>
-      <textarea class="feedback-textarea" id="feedback-msg" rows="5" placeholder="请描述你遇到的问题或建议…&#10;（可附上截图或复现步骤）"></textarea>
-      <div id="feedback-q" class="feedback-hint-row">
-        <span class="qq-status loading" id="feedback-q-status">检测中…</span>
-      </div>
+      <textarea class="feedback-textarea" id="feedback-msg" rows="5" placeholder="请描述你遇到的问题或建议…&#10;（建议附上截图或复现步骤）"></textarea>
+      <div class="feedback-send-status" id="feedback-send-status"></div>
       <div class="feedback-foot">
-        <span class="contact-hint">建议附上日志：<a class="log-link" id="log-link" href="#" onclick="window._openLogFolder();return false">📂 打开日志目录</a>，将内容复制粘贴到上方输入框</span>
+        <span class="contact-hint">建议附上日志：<a class="log-link" id="log-link" href="#" onclick="window._openLogFolder();return false">📂 打开日志目录</a>，将内容粘贴到上方输入框</span>
+        <span class="contact-hint" style="margin-top:4px">📧 或发送邮件至 <a href="mailto:1098905880@qq.com">1098905880@qq.com</a></span>
       </div>
       <div class="modal-actions" style="gap:8px">
         <button class="timer-btn-sm" id="btn-close-feedback">取消</button>
