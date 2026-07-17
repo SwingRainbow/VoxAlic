@@ -16,15 +16,5 @@ fn main() {
     std::fs::write(&dest, &compressed)
         .unwrap_or_else(|e| panic!("failed to write {}: {}", dest.display(), e));
 
-    // If smtp_creds.rs doesn't exist (fresh clone), copy from .example so the
-    // build succeeds. The .example has dummy values — SMTP will fail auth but
-    // the frontend gracefully falls back to QQ / clipboard.
-    let creds_path = PathBuf::from("src/smtp_creds.rs");
-    let example_path = PathBuf::from("src/smtp_creds.rs.example");
-    if !creds_path.exists() && example_path.exists() {
-        std::fs::copy(&example_path, &creds_path)
-            .unwrap_or_else(|e| panic!("failed to copy {} → {}: {}", example_path.display(), creds_path.display(), e));
-    }
-
     tauri_build::build()
 }

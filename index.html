@@ -467,19 +467,23 @@
     </div>
   </div>
 
-  <!-- Feedback modal -->
+  <!-- Feedback modal — 简化版：直接联系 QQ，不走 SMTP -->
   <div id="feedback-modal" class="modal-overlay hidden">
     <div class="modal-box">
-      <div class="modal-title">📤 发送反馈</div>
-      <textarea class="feedback-textarea" id="feedback-msg" rows="5" placeholder="请描述你遇到的问题或建议…&#10;（可附上联系方式方便回复，建议附上截图或复现步骤）"></textarea>
+      <div class="modal-title">📤 联系作者</div>
+      <p style="text-align:center;font-size:18px;margin:16px 0 4px">
+        QQ：<strong style="font-size:22px;letter-spacing:2px">1098905880</strong>
+      </p>
+      <p style="text-align:center;font-size:16px;margin:0 0 4px">
+        📧 邮箱：<strong>ccvtdd@qq.com</strong>
+      </p>
+      <p style="text-align:center;color:var(--dim);font-size:13px;margin:0 0 16px">
+        建议附上日志便于排查：<a class="log-link" href="#" onclick="window._openLogFolder();return false">📂 打开日志目录</a>
+      </p>
       <div class="feedback-send-status" id="feedback-send-status"></div>
-      <div class="feedback-foot">
-        <span class="contact-hint">建议附上日志：<a class="log-link" id="log-link" href="#" onclick="window._openLogFolder();return false">📂 打开日志目录</a>，将内容粘贴到上方输入框</span>
-        <span class="contact-hint" style="margin-top:4px">📧 或通过其他方式联系作者发送反馈</span>
-      </div>
-      <div class="modal-actions" style="gap:8px">
-        <button class="timer-btn-sm" id="btn-close-feedback">取消</button>
-        <button class="timer-btn-sm" id="btn-send-feedback">📤 发送</button>
+      <div class="modal-actions" style="gap:8px;justify-content:center">
+        <button class="timer-btn-sm" id="btn-close-feedback">关闭</button>
+        <button class="timer-btn-sm" id="btn-send-feedback">📋 复制联系方式</button>
       </div>
     </div>
   </div>

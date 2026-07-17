@@ -14,6 +14,7 @@ use tokio::sync::RwLock;
 use tauri::{Emitter, Manager};
 
 use crate::models::{MarketItemSummary, MarketOrder, MarketItemFull, MarketCacheStatus};
+use log::warn;
 
 const ICON_BASE: &str = "https://warframe.market/static/assets/";
 const ITEMS_URL: &str = "https://api.warframe.market/v2/items";
@@ -274,7 +275,11 @@ pub fn build_cache(app_data_dir: &std::path::Path) -> MarketCache {
                     last_updated,
                 };
             }
+        } else {
+            warn!("[wm] market cache parse failed, building fresh");
         }
+    } else {
+        warn!("[wm] market cache file missing, building fresh");
     }
     // Fallback: embedded default (always non-empty).
     let items: HashMap<String, MarketCachedItem> = embedded_items()
@@ -330,6 +335,7 @@ async fn fetch_detail(slug: &str) -> Result<CachedDetail, String> {
         .await
         .map_err(|e| format!("API 无响应: {e}"))?;
     if !resp.status().is_success() {
+        warn!("[wm] fetch_detail '{slug}' HTTP {}", resp.status());
         return Err(format!("API 返回 HTTP {}", resp.status()));
     }
     let body: serde_json::Value = resp.json().await.map_err(|e| format!("解析失败: {e}"))?;
@@ -356,6 +362,7 @@ async fn fetch_orders(slug: &str) -> Result<(Vec<MarketOrder>, Vec<MarketOrder>)
         .await
         .map_err(|e| format!("API 无响应: {e}"))?;
     if !resp.status().is_success() {
+        warn!("[wm] fetch_orders '{slug}' HTTP {}", resp.status());
         return Err(format!("API 返回 HTTP {}", resp.status()));
     }
     let body: serde_json::Value = resp.json().await.map_err(|e| format!("解析失败: {e}"))?;
@@ -489,6 +496,7 @@ pub async fn refresh_market_cache(
         .await
         .map_err(|e| format!("下载失败: {e}"))?;
     if !resp.status().is_success() {
+        warn!("[wm] cache refresh HTTP {}", resp.status());
         return Err(format!("API 返回 HTTP {}", resp.status()));
     }
     let body: serde_json::Value = resp.json().await.map_err(|e| format!("解析失败: {e}"))?;
@@ -547,6 +555,7 @@ pub async fn refresh_market_cache(
     }
 
     let _ = app_handle.emit("market-cache-ready", count);
+    warn!("[wm] cache refreshed — {count} items");
     Ok(count)
 }
 

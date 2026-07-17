@@ -898,17 +898,14 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // ── Feedback modal ──
   const feedbackModal = document.getElementById('feedback-modal')!;
-  const feedbackMsg = document.getElementById('feedback-msg') as HTMLTextAreaElement;
   const btnSendFeedback = document.getElementById('btn-send-feedback') as HTMLButtonElement;
   const feedbackSendStatus = document.getElementById('feedback-send-status')!;
 
   // Open modal
   document.getElementById('btn-open-feedback')!.addEventListener('click', () => {
     feedbackModal.classList.remove('hidden');
-    feedbackMsg.value = '';
     feedbackSendStatus.textContent = '';
     feedbackSendStatus.className = 'feedback-send-status';
-    feedbackMsg.focus();
   });
 
   document.getElementById('btn-close-feedback')!.addEventListener('click', () => {
@@ -918,52 +915,15 @@ window.addEventListener('DOMContentLoaded', () => {
     if (e.target === feedbackModal) feedbackModal.classList.add('hidden');
   });
 
-  // Send: Layer 1 SMTP → Layer 2 tencent:// → Layer 3 clipboard fallback
+  // Copy QQ + email to clipboard
   btnSendFeedback.addEventListener('click', async () => {
-    const msg = feedbackMsg.value.trim();
-    if (!msg) return;
-
-    // Step 0: copy to clipboard FIRST — content is never lost regardless of outcome.
-    try { await navigator.clipboard.writeText(msg); } catch { /* ignore */ }
-
-    // Disable button during send to prevent double-click.
-    btnSendFeedback.disabled = true;
-    btnSendFeedback.textContent = '发送中…';
-    feedbackSendStatus.textContent = '正在发送…';
-    feedbackSendStatus.className = 'feedback-send-status sending';
-
-    // ── Layer 1: SMTP ──
-    invoke('send_feedback', { message: msg })
-      .then(() => {
-        // SMTP success — done.
-        feedbackSendStatus.textContent = '✅ 已发送，感谢反馈！';
-        feedbackSendStatus.className = 'feedback-send-status success';
-        btnSendFeedback.disabled = false;
-        btnSendFeedback.textContent = '📤 发送';
-        setTimeout(() => { feedbackModal.classList.add('hidden'); }, 2000);
-      })
-      .catch(() => {
-        // SMTP failed — try Layer 2: tencent://
-        feedbackSendStatus.textContent = '正在尝试打开 QQ…';
-        invoke<boolean>('open_qq_chat', { uin: '1098905880' })
-          .then((ok) => {
-            if (ok) {
-              feedbackSendStatus.textContent = '📋 已复制到剪贴板，请粘贴到 QQ 对话框发送';
-              feedbackSendStatus.className = 'feedback-send-status success';
-            } else {
-              feedbackSendStatus.innerHTML = '📋 已复制到剪贴板，请通过 QQ 或其他方式联系作者发送';
-              feedbackSendStatus.className = 'feedback-send-status error';
-            }
-          })
-          .catch(() => {
-            // Layer 3: pure clipboard
-            feedbackSendStatus.innerHTML = '📋 已复制到剪贴板，请通过 QQ 或其他方式联系作者发送';
-            feedbackSendStatus.className = 'feedback-send-status error';
-          })
-          .finally(() => {
-            btnSendFeedback.disabled = false;
-            btnSendFeedback.textContent = '📤 发送';
-          });
-      });
+    try {
+      await navigator.clipboard.writeText('QQ: 1098905880\n邮箱: ccvtdd@qq.com');
+      feedbackSendStatus.textContent = '✅ 已复制联系方式，请贴入对话框发送';
+      feedbackSendStatus.className = 'feedback-send-status success';
+    } catch {
+      feedbackSendStatus.textContent = '⚠ 复制失败，请手动添加：QQ 1098905880 / ccvtdd@qq.com';
+      feedbackSendStatus.className = 'feedback-send-status error';
+    }
   });
 });

@@ -37,9 +37,6 @@ use tauri::{
 
 const REFRESH_SEC: u32 = 300;
 
-// ── SMTP feedback credentials (local-only, never committed) ────────────────────
-include!("smtp_creds.rs");
-
 // ── Subscription notifications ───────────────────────────────────────────────
 
 /// A fired subscription, surfaced via the tray red-dot + click popup (NOT a
@@ -1038,110 +1035,6 @@ fn open_qq_chat(uin: String) -> bool {
     }
 }
 
-/// Gather system diagnostics for feedback emails (Windows only).
-fn collect_diagnostics() -> String {
-    use std::os::windows::process::CommandExt;
-
-    let raw = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-NoLogo", "-Command", r#"
-[Console]::OutputEncoding = [Text.Encoding]::UTF8
-$os  = Get-CimInstance Win32_OperatingSystem
-$cpu = Get-CimInstance Win32_Processor | Select -First 1
-$gpu = Get-CimInstance Win32_VideoController | Where {$_.Name -notlike "*Virtual*" -and $_.Name -notlike "*Remote*"} | Select -First 1
-$loc = (Get-Culture).Name
-$tz  = (Get-TimeZone).Id
-Write-Output "$($os.Caption.Trim())|$($os.Version)|$($os.OSArchitecture)|$loc|$tz|$($cpu.Name.Trim())|$($gpu.Name.Trim())|$($gpu.DriverVersion)"
-"#.trim()])
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW — 隐藏命令行窗口
-        .output()
-        .ok()
-        .and_then(|o| {
-            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            if s.is_empty() { None } else { Some(s) }
-        })
-        .unwrap_or_default();
-
-    let mut p = raw.splitn(8, '|');
-    let os_name = p.next().filter(|s| !s.is_empty()).unwrap_or("Windows");
-    let os_ver  = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
-    let os_arch = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
-    let locale  = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
-    let tz      = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
-    let cpu     = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
-    let gpu     = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
-    let gpu_drv = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
-
-    format!(
-        "操作系统：{os_name} ({os_ver}) {os_arch}\n\
-         系统语言：{locale}\n\
-         时区：{tz}\n\
-         CPU：{cpu}\n\
-         显卡：{gpu}（驱动 {gpu_drv}）",
-    )
-}
-
-/// Send user feedback via SMTP to the developer's QQ mailbox.
-/// Uses the existing tokio runtime (same as the rest of the app).
-#[tauri::command]
-async fn send_feedback(message: String) -> Result<String, String> {
-    use lettre::message::Message;
-    use lettre::message::header::ContentType;
-    use lettre::{AsyncTransport, Tokio1Executor};
-    use lettre::transport::smtp::{AsyncSmtpTransport, authentication::Credentials};
-
-    let app_version = env!("CARGO_PKG_VERSION");
-    let log_dir = std::env::var("APPDATA")
-        .map(|roaming| format!("{}\\com.voxalic.app", roaming))
-        .unwrap_or_else(|_| "（无法获取路径）".into());
-    let diag = collect_diagnostics();
-    let game_ver = game_data_version();
-    let body = format!(
-        "【VoxAlic 用户反馈】\n\
-         ───────────────────\n\
-         {}\n\
-         ───────────────────\n\
-         版本：v{}\n\
-         游戏版本：{game_ver}\n\
-         {diag}\n\
-         架构：{}\n\
-         时间：{}\n\
-         \n\
-         📂 日志文件位于：{}\\voxalic.log\n\
-         （请附上日志文件，便于排查问题）",
-        message,
-        app_version,
-        std::env::consts::ARCH,
-        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
-        log_dir,
-    );
-
-    let email = Message::builder()
-        .from(SMTP_USER.parse().map_err(|e| format!("发件人格式错误：{e}"))?)
-        .to(SMTP_TO.parse().map_err(|e| format!("收件人格式错误：{e}"))?)
-        .subject(format!("[VoxAlic v{app_version}] 用户反馈"))
-        .header(ContentType::parse("text/plain; charset=utf-8").unwrap())
-        .body(body)
-        .map_err(|e| format!("邮件构建失败：{e}"))?;
-
-    let mailer = AsyncSmtpTransport::<Tokio1Executor>::relay("smtp.qq.com")
-        .map_err(|e| format!("SMTP 地址解析失败：{e}"))?
-        .credentials(Credentials::new(
-            SMTP_USER.to_string(),
-            smtp_auth_code(),
-        ))
-        .build();
-
-    tokio::time::timeout(
-        std::time::Duration::from_secs(SMTP_TIMEOUT_SECS),
-        mailer.send(email),
-    )
-    .await
-    .map_err(|_| "发送超时，请检查网络连接".to_string())?
-    .map_err(|e| format!("发送失败：{e}"))?;
-
-    Ok("ok".to_string())
-}
-
 /// Current accumulated subscription notifications (newest first) for the popup.
 #[tauri::command]
 fn get_notifications(list: tauri::State<'_, NotifyList>) -> Vec<SubNotify> {
@@ -1850,7 +1743,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, get_hotkey, set_hotkey, timer_command, list_windows, select_window, single_capture, capture_preview, test_recognize, test_alert, update_item_names, item_names_count, game_data_version, open_log_folder, open_qq_chat, send_feedback, get_notifications, clear_notifications, open_main_navigate, get_autostart, set_autostart, uninstall_clean, check_for_update, install_update, get_bark_url, test_phone_push, search_market_items, get_market_item, refresh_market_cache, market_cache_status, translate_items, market_signin, market_signout, market_auth_status, market_set_status, market_list_orders, market_create_order, market_update_order, market_delete_order, market_close_order])
+        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, get_hotkey, set_hotkey, timer_command, list_windows, select_window, single_capture, capture_preview, test_recognize, test_alert, update_item_names, item_names_count, game_data_version, open_log_folder, open_qq_chat, get_notifications, clear_notifications, open_main_navigate, get_autostart, set_autostart, uninstall_clean, check_for_update, install_update, get_bark_url, test_phone_push, search_market_items, get_market_item, refresh_market_cache, market_cache_status, translate_items, market_signin, market_signout, market_auth_status, market_set_status, market_list_orders, market_create_order, market_update_order, market_delete_order, market_close_order])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

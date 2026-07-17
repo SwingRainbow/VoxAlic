@@ -19,7 +19,7 @@ use futures_util::StreamExt;
 
 use base64::Engine;
 use crate::models::{MarketError, MarketAuthStatus};
-use log::debug;
+use log::{debug, warn, error};
 
 const MARKET_WEB: &str = "https://warframe.market";
 const MARKET_API_V1: &str = "https://api.warframe.market/v1";
@@ -134,8 +134,9 @@ fn persist(ai: &MarketAuthInner, app_data_dir: &std::path::Path) {
     let path = auth_path(app_data_dir);
     if let Ok(json) = serde_json::to_string(&af) {
         let tmp = path.with_extension("json.tmp");
-        let _ = std::fs::write(&tmp, &json);
-        let _ = std::fs::rename(&tmp, &path);
+        if std::fs::write(&tmp, &json).is_err() || std::fs::rename(&tmp, &path).is_err() {
+            error!("[wm] market_auth.json write failed");
+        }
     }
 }
 
@@ -151,7 +152,10 @@ pub fn load_or_create_auth(app_data_dir: &std::path::Path) -> SharedMarketAuth {
         if let Ok(s) = std::fs::read_to_string(&path) {
             match serde_json::from_str::<AuthFile>(&s) {
                 Ok(a) => (a.access_token, a.refresh_token, a.device_id, a.ingame_name, a.avatar, a.reputation),
-                Err(_) => (None, None, String::new(), None, None, None),
+                Err(_) => {
+                    error!("[wm] market_auth.json parse failed, resetting");
+                    (None, None, String::new(), None, None, None)
+                },
             }
         } else {
             (None, None, String::new(), None, None, None)
@@ -196,6 +200,7 @@ pub async fn ensure_valid_token(
             return Ok(format!("Bearer {}", token));
         }
         if a.refresh_token.is_none() {
+            warn!("[wm] token missing, auth expired");
             return Err(MarketError {
                 code: "auth_expired".into(),
                 message: "登录已过期，请重新登录".into(),
@@ -228,6 +233,7 @@ pub async fn ensure_valid_token(
                     Ok(format!("Bearer {}", new_access))
                 }
                 Err(_) => {
+                    warn!("[wm] token refresh failed");
                     let mut a = auth.inner.write().await;
                     a.access_token = None;
                     a.refresh_token = None;
@@ -241,10 +247,13 @@ pub async fn ensure_valid_token(
                 }
             }
         }
-        None => Err(MarketError {
-            code: "auth_expired".into(),
-            message: "登录已过期，请重新登录".into(),
-        }),
+        None => {
+            warn!("[wm] no refresh token available, auth expired");
+            Err(MarketError {
+                code: "auth_expired".into(),
+                message: "登录已过期，请重新登录".into(),
+            })
+        },
     }
 }
 
@@ -398,6 +407,7 @@ async fn ws_tls_connect(
         }
     }
 
+    error!("[wm] WS TLS all strategies exhausted");
     Err("all connection strategies exhausted".to_string())
 }
 
@@ -560,6 +570,7 @@ async fn run_ws_loop(
             a.access_token.clone()
         };
         let Some(jwt) = jwt else {
+            warn!("[wm] WS exiting — logged out");
             ws_log(&app_handle, "JWT gone, exiting");
             break;
         };
@@ -575,10 +586,12 @@ async fn run_ws_loop(
                 s
             }
             Ok(Err(e)) => {
+                warn!("[wm] WS TLS failed: {e}");
                 ws_log(&app_handle, &format!("TLS connect failed: {}", e));
                 break; // will reconnect
             }
             Err(_) => {
+                warn!("[wm] WS TLS connect timeout");
                 ws_log(&app_handle, "TLS connect timed out (35s)");
                 break;
             }
@@ -595,6 +608,7 @@ async fn run_ws_loop(
             tokio_tungstenite::client_async(request, tls_stream),
         ).await {
             Ok(Ok((mut ws, resp))) => {
+                warn!("[wm] WS connected");
                 ws_log(&app_handle, &format!("ws connected — status={}", resp.status()));
                 let _ = app_handle.emit("market-ws-state", "connected");
                 for (name, val) in resp.headers() {
@@ -665,15 +679,18 @@ async fn run_ws_loop(
                                     ws_log(&app_handle, &format!("recv Pong ({}b)", data.len()));
                                 }
                                 Some(Ok(tokio_tungstenite::tungstenite::Message::Close(frame))) => {
+                                    warn!("[wm] WS closed by server");
                                     ws_log(&app_handle, &format!("recv Close frame={:?}", frame));
                                 }
                                 Some(Ok(tokio_tungstenite::tungstenite::Message::Frame(_))) => {
                                     ws_log(&app_handle, "recv raw Frame");
                                 }
                                 Some(Err(e)) => {
+                                    warn!("[wm] WS read error: {e}");
                                     ws_log(&app_handle, &format!("recv error: {}", e));
                                 }
                                 None => {
+                                    warn!("[wm] WS stream ended");
                                     ws_log(&app_handle, "recv None (stream ended)");
                                 }
                             }
@@ -696,6 +713,7 @@ async fn run_ws_loop(
                                     let _ = ws.send(tokio_tungstenite::tungstenite::Message::Pong(data)).await;
                                 }
                                 Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) => {
+                                    warn!("[wm] WS server closed connection");
                                     ws_log(&app_handle, "server closed connection");
                                     break; // reconnect
                                 }
@@ -703,6 +721,7 @@ async fn run_ws_loop(
                                     // Binary/Pong/Frame — logged above, no action.
                                 }
                                 Some(Err(_)) | None => {
+                                    warn!("[wm] WS disconnected — reconnecting");
                                     break; // reconnect
                                 }
                             }
@@ -789,6 +808,7 @@ async fn handle_ws_message(text: &str, auth: &SharedMarketAuth, app_handle: &tau
     let v: serde_json::Value = match serde_json::from_str(text) {
         Ok(v) => v,
         Err(_) => {
+            warn!("[wm] WS unparseable JSON: {}", &text[..text.len().min(120)]);
             ws_log(app_handle, &format!("unparseable JSON: {}", &text[..text.len().min(120)]));
             return;
         }
@@ -831,9 +851,11 @@ async fn handle_ws_message(text: &str, auth: &SharedMarketAuth, app_handle: &tau
                     ws_log(app_handle, &format!("legacy online_count: {}", total));
                 }
                 "" if route.is_empty() => {
+                    warn!("[wm] WS message with no route/type");
                     ws_log(app_handle, &format!("message with no route/type: {}", &text[..text.len().min(150)]));
                 }
                 _ => {
+                    warn!("[wm] WS unknown route={} type={}", route, msg_type);
                     ws_log(app_handle, &format!("unknown route={} type={} payload={:?}", route, msg_type, v["payload"]));
                 }
             }
@@ -892,6 +914,7 @@ async fn fetch_csrf() -> Result<CsrfContext, MarketError> {
         .filter_map(|v| v.to_str().ok().map(|s| s.to_string())).collect();
     let body = resp.text().await.unwrap_or_default();
     if status != 200 {
+        error!("[wm] CSRF fetch HTTP {status}");
         return Err(MarketError {
             code: "server_error".into(),
             message: format!("CSRF 页面返回 HTTP {}", status),
@@ -901,9 +924,11 @@ async fn fetch_csrf() -> Result<CsrfContext, MarketError> {
     for v in &cookies {
         if let Some(p) = v.split(';').next() { parts.push(p.trim().to_string()); }
     }
-    let csrf = extract_csrf_from_html(&body).ok_or_else(|| MarketError {
+    let csrf = extract_csrf_from_html(&body).ok_or_else(|| {
+        error!("[wm] CSRF token not found in HTML");
+        MarketError {
         code: "server_error".into(), message: "无法获取 CSRF token".into(),
-    })?;
+    }})?;
     Ok(CsrfContext { csrf_token: csrf, session_cookie: parts.join("; ") })
 }
 
@@ -960,6 +985,7 @@ async fn do_signin(
                 .and_then(|v| v["payload"]["user"]["reputation"].as_i64().map(|r| r as i32));
             match (access_token, ingame_name) {
                 (Some(at), Some(name)) => {
+                    warn!("[wm] signin ok — {name}");
                     let _ = app_handle.emit("market-login-phase", "登录成功");
                     let app_data_dir = app_handle.path().app_data_dir().map_err(|_| MarketError {
                         code: "unknown".into(), message: "无法获取应用数据目录".into(),
@@ -974,18 +1000,28 @@ async fn do_signin(
                         avatar: a.avatar.clone(), reputation: a.reputation,
                         current_status: a.current_status.clone() })
                 }
-                _ => Err(MarketError { code: "server_error".into(),
-                    message: "服务器响应异常".into() }),
+                _ => {
+                    error!("[wm] signin HTTP 200 but no access_token extracted");
+                    Err(MarketError { code: "server_error".into(),
+                    message: "服务器响应异常".into() })
+                },
             }
         }
         401 => {
             let bl = body_text.to_lowercase();
             let code = if bl.contains("email") || bl.contains("user") { "email_not_found" } else { "wrong_password" };
+            warn!("[wm] signin 401 — {code}");
             Err(MarketError { code: code.into(),
                 message: if code == "email_not_found" { "该邮箱未注册".into() } else { "密码错误".into() } })
         }
-        429 => Err(MarketError { code: "rate_limited".into(), message: "请求过于频繁".into() }),
-        c if c >= 500 => Err(MarketError { code: "server_error".into(), message: "Warframe.Market 服务暂时不可用".into() }),
+        429 => {
+            warn!("[wm] signin 429 rate limited");
+            Err(MarketError { code: "rate_limited".into(), message: "请求过于频繁".into() })
+        }
+        c if c >= 500 => {
+            error!("[wm] signin HTTP {c} — WM server error");
+            Err(MarketError { code: "server_error".into(), message: "Warframe.Market 服务暂时不可用".into() })
+        }
         _ => {
             // Try to parse the Warframe.Market validation error format:
             // {"error": {"password": ["app.account.password_invalid"]}}
@@ -1013,6 +1049,7 @@ async fn do_signin(
             } else {
                 body_text.chars().take(120).collect()
             };
+            error!("[wm] signin HTTP {status}: {hint}");
             Err(MarketError { code: "unknown".into(), message: format!("登录失败：{hint}") })
         }
     }

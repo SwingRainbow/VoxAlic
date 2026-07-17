@@ -15,7 +15,7 @@ use crate::market::SharedMarketCache;
 use crate::market_auth::SharedMarketAuth;
 use crate::market_auth::ensure_valid_token;
 use crate::models::{MarketError, ProfileOrder, CreateOrderRequest, UpdateOrderRequest};
-use log::debug;
+use log::{debug, warn};
 use tauri::Manager;
 
 const MARKET_V2: &str = "https://api.warframe.market/v2";
@@ -86,6 +86,7 @@ async fn resolve_object_id(
         })?;
 
     if !resp.status().is_success() {
+        warn!("[wm] resolve_object_id '{slug}' HTTP {}", resp.status().as_u16());
         return Err(MarketError {
             code: "invalid_input".into(),
             message: "该物品在 Warframe.Market 上不存在".into(),
@@ -200,6 +201,7 @@ fn parse_order(o: &serde_json::Value, cache: &crate::market::MarketCache) -> Opt
 
 /// Clear auth state when token is expired.
 async fn clear_auth(auth: &SharedMarketAuth, app_data_dir: &std::path::Path) {
+    warn!("[wm] auth cleared — token rejected by API");
     let mut a = auth.inner.write().await;
     a.access_token = None;
     a.refresh_token = None;
@@ -256,6 +258,7 @@ pub async fn market_list_orders(
         if me.code == "auth_expired" {
             clear_auth(&auth, &app_data_dir).await;
         }
+        warn!("[wm] list_orders HTTP {status}: {}", me.code);
         Err(me)
     }
 }
@@ -349,6 +352,7 @@ pub async fn market_create_order(
         if me.code == "auth_expired" {
             clear_auth(&auth, &app_data_dir).await;
         }
+        warn!("[wm] create_order HTTP {status}: {}", me.code);
         Err(me)
     }
 }
@@ -437,6 +441,7 @@ pub async fn market_update_order(
         if me.code == "auth_expired" {
             clear_auth(&auth, &app_data_dir).await;
         }
+        warn!("[wm] update_order HTTP {status}: {}", me.code);
         Err(me)
     }
 }
@@ -476,6 +481,7 @@ pub async fn market_delete_order(
         if me.code == "auth_expired" {
             clear_auth(&auth, &app_data_dir).await;
         }
+        warn!("[wm] delete_order HTTP {status}: {}", me.code);
         Err(me)
     }
 }
@@ -515,6 +521,7 @@ pub async fn market_close_order(
         if me.code == "auth_expired" {
             clear_auth(&auth, &app_data_dir).await;
         }
+        warn!("[wm] close_order HTTP {status}: {}", me.code);
         Err(me)
     }
 }
