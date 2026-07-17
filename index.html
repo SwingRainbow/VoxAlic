@@ -94,89 +94,79 @@
 
   <div id="tab-settings" class="tab-content">
     <div class="settings-group">
-      <div class="settings-item">
-        <div class="settings-label">最小化到托盘</div>
-        <label class="toggle">
-          <input type="checkbox" id="setting-close-to-tray" checked />
-          <span class="toggle-slider"></span>
-        </label>
+
+      <!-- 版本信息 -->
+      <div class="settings-item settings-version-row">
+        <span>VoxAlic <span id="update-cur-version" class="version-num">--</span></span>
+        <span class="settings-sep">|</span>
+        <span>游戏版本 <span id="itemnames-status" class="version-num">--</span></span>
       </div>
 
-      <div class="settings-item">
-        <div class="settings-label">开机自启</div>
-        <label class="toggle">
-          <input type="checkbox" id="setting-autostart" />
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
+      <!-- 系统 -->
+      <details class="settings-section">
+        <summary class="settings-section-title">系统</summary>
 
-      <div class="settings-item">
-        <div class="settings-label">全局热键</div>
-        <div class="hotkey-row">
-          <input type="text" id="hotkey-input" class="hotkey-input" placeholder="点击后按键设置…" readonly />
-          <button class="timer-btn-sm" id="btn-hotkey-save">保存</button>
-          <button class="timer-btn-sm" id="btn-hotkey-clear">清除</button>
-          <span class="calib-result" id="hotkey-status"></span>
+        <div class="settings-item">
+          <div class="settings-label">最小化到托盘</div>
+          <label class="toggle">
+            <input type="checkbox" id="setting-close-to-tray" checked />
+            <span class="toggle-slider"></span>
+          </label>
         </div>
-        <div class="settings-hint">点击输入框后按下组合键（如 Ctrl+Shift+W），点保存生效</div>
-      </div>
 
-      <div class="settings-item">
-        <div class="settings-label">提醒方式</div>
-        <div class="timer-alert-method">
-          <div class="alert-method-row">
-            <label class="timer-radio">
-              <input type="radio" name="alert-method" value="focus" checked />
-              <span>强制弹窗（切回游戏）</span>
-            </label>
-            <label class="timer-radio">
-              <input type="radio" name="alert-method" value="toast" />
-              <span>Windows通知</span>
-            </label>
-            <button class="timer-btn-sm" id="btn-test-alert">测试提醒</button>
-            <button class="timer-btn-sm" id="btn-edit-alert-text">自定义提示词…</button>
-            <span class="calib-result" id="alert-test-status"></span>
+        <div class="settings-item">
+          <div class="settings-label">开机自启</div>
+          <label class="toggle">
+            <input type="checkbox" id="setting-autostart" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="settings-item">
+          <div class="settings-label">全局热键</div>
+          <div class="hotkey-row">
+            <input type="text" id="hotkey-input" class="hotkey-input" placeholder="点击后按键设置…" readonly />
+            <button class="timer-btn-sm" id="btn-hotkey-save">保存</button>
+            <button class="timer-btn-sm" id="btn-hotkey-clear">清除</button>
+            <span class="calib-result" id="hotkey-status"></span>
+          </div>
+          <div class="settings-hint">点击输入框后按下组合键（如 Ctrl+Shift+W），点保存生效</div>
+        </div>
+      </details>
+
+      <!-- 提醒 -->
+      <details class="settings-section">
+        <summary class="settings-section-title">提醒</summary>
+
+        <div class="settings-item">
+          <div class="settings-label">提醒方式</div>
+          <div class="timer-alert-method">
+            <div class="alert-method-row">
+              <label class="timer-radio">
+                <input type="radio" name="alert-method" value="focus" checked />
+                <span>强制弹窗（切回游戏）</span>
+              </label>
+              <label class="timer-radio">
+                <input type="radio" name="alert-method" value="toast" />
+                <span>Windows通知</span>
+              </label>
+              <button class="timer-btn-sm" id="btn-test-alert">测试提醒</button>
+              <button class="timer-btn-sm" id="btn-edit-alert-text">自定义提示词…</button>
+              <span class="calib-result" id="alert-test-status"></span>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div class="settings-item">
-        <div class="settings-label">物品库</div>
-        <div class="alert-method-row">
-          <span class="calib-result" id="itemnames-status">--</span>
+        <div class="settings-item">
+          <div class="settings-label">手机通知</div>
+          <div class="alert-method-row">
+            <button class="timer-btn-sm" id="btn-open-bark-modal">配置</button>
+            <span class="calib-result" id="bark-status"></span>
+          </div>
         </div>
-      </div>
+      </details>
 
-      <div class="settings-item">
-        <div class="settings-label">Warframe Market</div>
-        <div class="alert-method-row">
-          <label>语言：</label>
-          <label class="radio-inline"><input type="radio" name="market-language" value="en" checked> English</label>
-          <label class="radio-inline"><input type="radio" name="market-language" value="zh"> 中文</label>
-          <span class="settings-sep">|</span>
-          <button class="timer-btn-sm" id="btn-market-refresh">刷新物品库</button>
-          <span class="calib-result" id="market-status-settings"></span>
-        </div>
-      </div>
-
-      <div class="settings-item">
-        <div class="settings-label">数据源</div>
-        <div class="alert-method-row">
-          <label class="radio-inline"><input type="radio" name="worldstate-source" value="official" checked> 官方源</label>
-          <label class="radio-inline"><input type="radio" name="worldstate-source" value="mirror"> 镜像源</label>
-          <span class="calib-result" id="worldstate-source-status"></span>
-        </div>
-      </div>
-
-      <div class="settings-item">
-        <div class="settings-label">手机通知</div>
-        <div class="alert-method-row">
-          <button class="timer-btn-sm" id="btn-open-bark-modal">配置</button>
-          <span class="calib-result" id="bark-status"></span>
-        </div>
-      </div>
-
-      <!-- Bark config popup -->
+      <!-- Bark config popup — outside <details> so fixed-position overlay works when section is closed -->
       <div id="bark-config-modal" class="modal-overlay hidden">
         <div class="modal-box">
           <div class="modal-title">手机通知配置</div>
@@ -204,32 +194,74 @@
         </div>
       </div>
 
-      <div class="settings-item">
-        <div class="settings-label">软件更新</div>
-        <div class="alert-method-row">
-          <span id="update-cur-version" style="color:var(--text-dim)">当前版本 --</span>
-          <label class="radio-inline"><input type="radio" name="update-source" value="gitee" checked> Gitee</label>
-          <label class="radio-inline"><input type="radio" name="update-source" value="github"> GitHub</label>
-          <button class="timer-btn-sm" id="btn-check-update">检查更新</button>
-          <span class="calib-result" id="update-status"></span>
-        </div>
-      </div>
+      <!-- 数据 -->
+      <details class="settings-section">
+        <summary class="settings-section-title">数据</summary>
 
-      <div class="settings-item">
-        <div class="settings-label">其他</div>
-        <div class="alert-method-row">
-          <button class="timer-btn-sm" id="btn-refresh">刷新数据</button>
-          <button class="timer-btn-sm btn-danger" id="btn-uninstall">卸载软件…</button>
+        <div class="settings-item">
+          <div class="settings-label">数据源</div>
+          <div class="alert-method-row">
+            <label class="radio-inline"><input type="radio" name="worldstate-source" value="official" checked> 官方源</label>
+            <label class="radio-inline"><input type="radio" name="worldstate-source" value="mirror"> 镜像源</label>
+            <span class="calib-result" id="worldstate-source-status"></span>
+          </div>
         </div>
-      </div>
+      </details>
 
-      <div class="settings-item">
-        <div class="settings-label">联系作者</div>
-        <div class="alert-method-row">
-          <button class="timer-btn-sm" id="btn-open-feedback">📤 反馈</button>
-          <span style="font-size:11px;color:var(--dim)">遇到 bug 或有功能建议？点击反馈告诉我们</span>
+      <!-- Warframe Market -->
+      <details class="settings-section">
+        <summary class="settings-section-title">Warframe Market</summary>
+
+        <div class="settings-item">
+          <div class="settings-label">语言</div>
+          <div class="alert-method-row">
+            <label class="radio-inline"><input type="radio" name="market-language" value="en" checked> English</label>
+            <label class="radio-inline"><input type="radio" name="market-language" value="zh"> 中文</label>
+            <span class="settings-sep">|</span>
+            <button class="timer-btn-sm" id="btn-market-refresh">刷新物品库</button>
+            <span class="calib-result" id="market-status-settings"></span>
+          </div>
         </div>
-      </div>
+      </details>
+
+      <!-- 更新 -->
+      <details class="settings-section">
+        <summary class="settings-section-title">更新</summary>
+
+        <div class="settings-item">
+          <div class="settings-label">更新源</div>
+          <div class="alert-method-row">
+            <label class="radio-inline"><input type="radio" name="update-source" value="gitee" checked> Gitee</label>
+            <label class="radio-inline"><input type="radio" name="update-source" value="github"> GitHub</label>
+          </div>
+        </div>
+      </details>
+
+      <!-- 其他 -->
+      <details class="settings-section">
+        <summary class="settings-section-title">其他</summary>
+
+        <div class="settings-item">
+          <div class="alert-method-row">
+            <button class="timer-btn-sm" id="btn-check-update">检查更新</button>
+            <button class="timer-btn-sm" id="btn-refresh">刷新数据</button>
+            <button class="timer-btn-sm btn-danger" id="btn-uninstall">卸载软件…</button>
+          </div>
+        </div>
+      </details>
+
+      <!-- 联系作者 -->
+      <details class="settings-section">
+        <summary class="settings-section-title">联系作者</summary>
+
+        <div class="settings-item">
+          <div class="alert-method-row">
+            <button class="timer-btn-sm" id="btn-open-feedback">📤 反馈</button>
+            <span style="font-size:11px;color:var(--dim)">遇到 bug 或有功能建议？点击反馈告诉我们</span>
+          </div>
+        </div>
+      </details>
+
     </div>
 
     <!-- 统一订阅面板 -->
@@ -438,7 +470,7 @@
   <div id="feedback-modal" class="modal-overlay hidden">
     <div class="modal-box">
       <div class="modal-title">📤 发送反馈</div>
-      <textarea class="feedback-textarea" id="feedback-msg" rows="5" placeholder="请描述你遇到的问题或建议…&#10;（建议附上截图或复现步骤）"></textarea>
+      <textarea class="feedback-textarea" id="feedback-msg" rows="5" placeholder="请描述你遇到的问题或建议…&#10;（可附上联系方式方便回复，建议附上截图或复现步骤）"></textarea>
       <div class="feedback-send-status" id="feedback-send-status"></div>
       <div class="feedback-foot">
         <span class="contact-hint">建议附上日志：<a class="log-link" id="log-link" href="#" onclick="window._openLogFolder();return false">📂 打开日志目录</a>，将内容粘贴到上方输入框</span>

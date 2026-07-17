@@ -620,6 +620,81 @@ tr.expiring td:last-child { color: var(--warn); font-weight: bold; transition: c
   border-radius: var(--radius-lg);
   overflow: hidden;
 }
+
+/* ── Accordion sections ── */
+details.settings-section {
+  border-top: 1px solid var(--border);
+}
+details.settings-section:first-of-type {
+  border-top: 1px solid var(--border);  /* version row has its own border-bottom */
+}
+details.settings-section[open] {
+  background: rgba(255,255,255,0.015);
+  border-left: 2px solid rgba(255,255,255,0.12);
+}
+details.settings-section summary.settings-section-title {
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  transition: color 0.15s, background 0.15s;
+}
+details.settings-section summary.settings-section-title:hover {
+  color: var(--text);
+}
+details.settings-section[open] summary.settings-section-title {
+  color: var(--text);
+  border-bottom: 1px solid var(--border-soft);
+}
+details.settings-section summary.settings-section-title::-webkit-details-marker {
+  display: none;
+}
+details.settings-section summary.settings-section-title::after {
+  content: '▸';
+  display: inline-block;
+  font-size: 10px;
+  color: var(--dim);
+  transition: transform 0.2s;
+  flex-shrink: 0;
+  margin-left: 12px;
+}
+details.settings-section[open] summary.settings-section-title::after {
+  content: '▾';
+}
+
+/* ── Version row at top ── */
+.settings-version-row {
+  font-size: 11px;
+  color: var(--dim);
+  padding: 8px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.settings-version-row > span:first-child {
+  flex: 1;
+}
+.settings-version-row > span:last-child {
+  flex: 1;
+  text-align: right;
+}
+.settings-version-row .settings-sep {
+  flex: 0;
+  color: var(--border);
+  user-select: none;
+  padding: 0 12px;
+}
+.settings-version-row .version-num {
+  color: #ffd27a;
+  font-weight: 600;
+}
 .settings-item {
   display: flex;
   align-items: center;

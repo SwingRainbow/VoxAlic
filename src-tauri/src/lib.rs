@@ -38,13 +38,17 @@ use tauri::{
 const REFRESH_SEC: u32 = 300;
 
 // ── SMTP feedback credentials ─────────────────────────────────────────────────
-// ⚠️ 提交代码前确认 SMTP_AUTH_CODE 不是真实授权码。
-//    授权码泄露的唯一后果：攻击者可向此邮箱发垃圾邮件。
-//    补救：登录 mail.qq.com → 重置授权码（旧码即刻失效）。
-const SMTP_USER: &str = "1098905880@qq.com";
-const SMTP_AUTH_CODE: &str = "rbjtvjiifewugiig";
+// SMTP 授权码经 XOR 编码存储，防止 strings 直接提取。
+// 泄露仍可登录 mail.qq.com 重置授权码（旧码即刻失效）。
+const SMTP_USER: &str = "3491765627@qq.com";
+const SMTP_AUTH_ENCODED: &[u8] = &[0xC2, 0xDF, 0xC3, 0xCF, 0xD3, 0xD0, 0xCF, 0xD6, 0xCD, 0xC1, 0xD3, 0xCF, 0xD4, 0xDD, 0xDF, 0xD2];
 const SMTP_TO: &str = "1098905880@qq.com";
 const SMTP_TIMEOUT_SECS: u64 = 10;
+
+fn smtp_auth_code() -> String {
+    const KEY: u8 = 0xB7;
+    SMTP_AUTH_ENCODED.iter().map(|b| (b ^ KEY) as char).collect()
+}
 
 // ── Subscription notifications ───────────────────────────────────────────────
 
@@ -1088,7 +1092,7 @@ async fn send_feedback(message: String) -> Result<String, String> {
         .map_err(|e| format!("SMTP 地址解析失败：{e}"))?
         .credentials(Credentials::new(
             SMTP_USER.to_string(),
-            SMTP_AUTH_CODE.to_string(),
+            smtp_auth_code(),
         ))
         .build();
 

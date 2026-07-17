@@ -396,7 +396,7 @@ window.addEventListener('DOMContentLoaded', () => {
   const updateModalStatus = document.getElementById('update-modal-status')!;
   const confirmUpdateBtn = document.getElementById('btn-confirm-update') as HTMLButtonElement;
   getVersion().then(v => {
-    document.getElementById('update-cur-version')!.textContent = `当前版本 ${v}`;
+    document.getElementById('update-cur-version')!.textContent = `v${v}`;
   });
   const updateSource = (): string =>
     (document.querySelector('input[name="update-source"]:checked') as HTMLInputElement | null)?.value ?? 'gitee';
