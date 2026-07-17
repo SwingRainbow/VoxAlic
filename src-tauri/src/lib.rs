@@ -1040,8 +1040,11 @@ fn open_qq_chat(uin: String) -> bool {
 
 /// Gather system diagnostics for feedback emails (Windows only).
 fn collect_diagnostics() -> String {
+    use std::os::windows::process::CommandExt;
+
     let raw = std::process::Command::new("powershell")
         .args(["-NoProfile", "-NoLogo", "-Command", r#"
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
 $os  = Get-CimInstance Win32_OperatingSystem
 $cpu = Get-CimInstance Win32_Processor | Select -First 1
 $gpu = Get-CimInstance Win32_VideoController | Where {$_.Name -notlike "*Virtual*" -and $_.Name -notlike "*Remote*"} | Select -First 1
@@ -1049,6 +1052,7 @@ $loc = (Get-Culture).Name
 $tz  = (Get-TimeZone).Id
 Write-Output "$($os.Caption.Trim())|$($os.Version)|$($os.OSArchitecture)|$loc|$tz|$($cpu.Name.Trim())|$($gpu.Name.Trim())|$($gpu.DriverVersion)"
 "#.trim()])
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW — 隐藏命令行窗口
         .output()
         .ok()
         .and_then(|o| {
