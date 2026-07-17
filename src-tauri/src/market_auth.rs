@@ -987,15 +987,33 @@ async fn do_signin(
         429 => Err(MarketError { code: "rate_limited".into(), message: "请求过于频繁".into() }),
         c if c >= 500 => Err(MarketError { code: "server_error".into(), message: "Warframe.Market 服务暂时不可用".into() }),
         _ => {
-            // Include the response body in 4xx errors so we can see what the server complains about.
+            // Try to parse the Warframe.Market validation error format:
+            // {"error": {"password": ["app.account.password_invalid"]}}
             let hint = if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body_text) {
-                v["error"].as_str().or(v["message"].as_str())
-                    .unwrap_or(&body_text)
-                    .to_string()
+                if let Some(err_obj) = v["error"].as_object() {
+                    // Collect all error codes from all fields.
+                    let codes: Vec<&str> = err_obj.values()
+                        .filter_map(|a| a.as_array())
+                        .flatten()
+                        .filter_map(|s| s.as_str())
+                        .collect();
+                    let friendly = codes.iter().map(|c| match *c {
+                        "app.account.password_invalid" => "密码错误",
+                        "app.account.email_invalid" => "邮箱格式不正确",
+                        "app.account.email_not_found" => "该邮箱未注册",
+                        other => other,
+                    }).collect::<Vec<_>>().join("；");
+                    if !friendly.is_empty() { friendly }
+                    else { v.to_string() }
+                } else {
+                    v["error"].as_str().or(v["message"].as_str())
+                        .unwrap_or(&body_text)
+                        .to_string()
+                }
             } else {
                 body_text.chars().take(120).collect()
             };
-            Err(MarketError { code: "unknown".into(), message: format!("登录失败 (HTTP {})：{}", status, hint) })
+            Err(MarketError { code: "unknown".into(), message: format!("登录失败：{hint}") })
         }
     }
 }
