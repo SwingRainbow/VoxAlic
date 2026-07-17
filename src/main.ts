@@ -933,34 +933,37 @@ window.addEventListener('DOMContentLoaded', () => {
     feedbackSendStatus.className = 'feedback-send-status sending';
 
     // ── Layer 1: SMTP ──
-    try {
-      await invoke('send_feedback', { message: msg });
-      // Success — done.
-      feedbackSendStatus.textContent = '✅ 已发送，感谢反馈！';
-      feedbackSendStatus.className = 'feedback-send-status success';
-      setTimeout(() => { feedbackModal.classList.add('hidden'); }, 2000);
-      return;
-    } catch (_e) {
-      // SMTP failed — silently fall through to Layer 2.
-    }
-
-    // ── Layer 2: tencent:// (ShellExecuteW) ──
-    feedbackSendStatus.textContent = '正在尝试打开 QQ…';
-    try {
-      const ok = await invoke<boolean>('open_qq_chat', { uin: '1098905880' });
-      if (ok) {
-        feedbackSendStatus.textContent = '📋 已复制到剪贴板，请粘贴到 QQ 对话框发送';
+    invoke('send_feedback', { message: msg })
+      .then(() => {
+        // SMTP success — done.
+        feedbackSendStatus.textContent = '✅ 已发送，感谢反馈！';
         feedbackSendStatus.className = 'feedback-send-status success';
         btnSendFeedback.disabled = false;
         btnSendFeedback.textContent = '📤 发送';
-        return;
-      }
-    } catch { /* fall through to Layer 3 */ }
-
-    // ── Layer 3: pure clipboard ──
-    feedbackSendStatus.innerHTML = '📋 已复制到剪贴板，请手动打开 QQ 粘贴给 <b>1098905880</b>';
-    feedbackSendStatus.className = 'feedback-send-status error';
-    btnSendFeedback.disabled = false;
-    btnSendFeedback.textContent = '📤 发送';
+        setTimeout(() => { feedbackModal.classList.add('hidden'); }, 2000);
+      })
+      .catch(() => {
+        // SMTP failed — try Layer 2: tencent://
+        feedbackSendStatus.textContent = '正在尝试打开 QQ…';
+        invoke<boolean>('open_qq_chat', { uin: '1098905880' })
+          .then((ok) => {
+            if (ok) {
+              feedbackSendStatus.textContent = '📋 已复制到剪贴板，请粘贴到 QQ 对话框发送';
+              feedbackSendStatus.className = 'feedback-send-status success';
+            } else {
+              feedbackSendStatus.innerHTML = '📋 已复制到剪贴板，请手动打开 QQ 粘贴给 <b>1098905880</b>';
+              feedbackSendStatus.className = 'feedback-send-status error';
+            }
+          })
+          .catch(() => {
+            // Layer 3: pure clipboard
+            feedbackSendStatus.innerHTML = '📋 已复制到剪贴板，请手动打开 QQ 粘贴给 <b>1098905880</b>';
+            feedbackSendStatus.className = 'feedback-send-status error';
+          })
+          .finally(() => {
+            btnSendFeedback.disabled = false;
+            btnSendFeedback.textContent = '📤 发送';
+          });
+      });
   });
 });
