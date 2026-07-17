@@ -1053,6 +1053,9 @@ async fn send_feedback(message: String) -> Result<String, String> {
     use lettre::transport::smtp::{AsyncSmtpTransport, authentication::Credentials};
 
     let app_version = env!("CARGO_PKG_VERSION");
+    let log_dir = std::env::var("APPDATA")
+        .map(|roaming| format!("{}\\com.voxalic.app", roaming))
+        .unwrap_or_else(|_| "（无法获取路径）".into());
     let body = format!(
         "【VoxAlic 用户反馈】\n\
          ───────────────────\n\
@@ -1060,12 +1063,16 @@ async fn send_feedback(message: String) -> Result<String, String> {
          ───────────────────\n\
          版本：{}\n\
          平台：{} {}\n\
-         时间：{}",
+         时间：{}\n\
+         \n\
+         📂 日志文件位于：{}\\voxalic.log\n\
+         （请附上日志文件，便于排查问题）",
         message,
         app_version,
         std::env::consts::OS,
         std::env::consts::ARCH,
         chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
+        log_dir,
     );
 
     let email = Message::builder()
