@@ -951,13 +951,13 @@ window.addEventListener('DOMContentLoaded', () => {
               feedbackSendStatus.textContent = '📋 已复制到剪贴板，请粘贴到 QQ 对话框发送';
               feedbackSendStatus.className = 'feedback-send-status success';
             } else {
-              feedbackSendStatus.innerHTML = '📋 已复制到剪贴板，请手动打开 QQ 粘贴给 <b>1098905880</b>';
+              feedbackSendStatus.innerHTML = '📋 已复制到剪贴板，请通过 QQ 或其他方式联系作者发送';
               feedbackSendStatus.className = 'feedback-send-status error';
             }
           })
           .catch(() => {
             // Layer 3: pure clipboard
-            feedbackSendStatus.innerHTML = '📋 已复制到剪贴板，请手动打开 QQ 粘贴给 <b>1098905880</b>';
+            feedbackSendStatus.innerHTML = '📋 已复制到剪贴板，请通过 QQ 或其他方式联系作者发送';
             feedbackSendStatus.className = 'feedback-send-status error';
           })
           .finally(() => {
