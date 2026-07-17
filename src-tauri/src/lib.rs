@@ -37,18 +37,8 @@ use tauri::{
 
 const REFRESH_SEC: u32 = 300;
 
-// ── SMTP feedback credentials ─────────────────────────────────────────────────
-// SMTP 授权码经 XOR 编码存储，防止 strings 直接提取。
-// 泄露仍可登录 mail.qq.com 重置授权码（旧码即刻失效）。
-const SMTP_USER: &str = "3491765627@qq.com";
-const SMTP_AUTH_ENCODED: &[u8] = &[0xC2, 0xDF, 0xC3, 0xCF, 0xD3, 0xD0, 0xCF, 0xD6, 0xCD, 0xC1, 0xD3, 0xCF, 0xD4, 0xDD, 0xDF, 0xD2];
-const SMTP_TO: &str = "1098905880@qq.com";
-const SMTP_TIMEOUT_SECS: u64 = 10;
-
-fn smtp_auth_code() -> String {
-    const KEY: u8 = 0xB7;
-    SMTP_AUTH_ENCODED.iter().map(|b| (b ^ KEY) as char).collect()
-}
+// ── SMTP feedback credentials (local-only, never committed) ────────────────────
+include!("smtp_creds.rs");
 
 // ── Subscription notifications ───────────────────────────────────────────────
 

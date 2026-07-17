@@ -70,3 +70,6 @@ release_notes.txt
 
 # Temp files
 *.tmp
+
+# SMTP credentials — local-only, never commit real creds
+src-tauri/src/smtp_creds.rs
