@@ -1094,12 +1094,14 @@ async fn send_feedback(message: String) -> Result<String, String> {
         .map(|roaming| format!("{}\\com.voxalic.app", roaming))
         .unwrap_or_else(|_| "（无法获取路径）".into());
     let diag = collect_diagnostics();
+    let game_ver = game_data_version();
     let body = format!(
         "【VoxAlic 用户反馈】\n\
          ───────────────────\n\
          {}\n\
          ───────────────────\n\
          版本：v{}\n\
+         游戏版本：{game_ver}\n\
          {diag}\n\
          架构：{}\n\
          时间：{}\n\
