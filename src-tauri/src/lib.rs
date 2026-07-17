@@ -1039,32 +1039,42 @@ fn open_qq_chat(uin: String) -> bool {
 }
 
 /// Gather system diagnostics for feedback emails (Windows only).
-fn collect_diagnostics(config: &AppConfig) -> String {
-    // OS version + locale via PowerShell — simpler than verbose windows-rs registry calls.
-    let os_line = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-NoLogo", "-Command",
-            r#"$os = Get-CimInstance Win32_OperatingSystem; Write-Output "$($os.Caption.Trim())|$($os.Version)|$($os.OSArchitecture)|$(Get-Culture | Select -Expand Name)""#])
+fn collect_diagnostics() -> String {
+    // Pull OS, locale, CPU, RAM, GPU in a single PowerShell invocation.
+    let raw = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NoLogo", "-Command", r#"
+$os  = Get-CimInstance Win32_OperatingSystem
+$cpu = Get-CimInstance Win32_Processor | Select -First 1
+$mem = Get-CimInstance Win32_ComputerSystem
+$gpu = Get-CimInstance Win32_VideoController | Where {$_.Name -notlike "*Virtual*" -and $_.Name -notlike "*Remote*"} | Select -First 1
+$ram = [math]::Round($mem.TotalPhysicalMemory / 1GB)
+$loc = (Get-Culture).Name
+Write-Output "$($os.Caption.Trim())|$($os.Version)|$($os.OSArchitecture)|$loc|$($cpu.Name.Trim())|${ram}GB|$($gpu.Name.Trim())|$($gpu.DriverVersion)"
+"#.trim()])
         .output()
         .ok()
         .and_then(|o| {
             let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
             if s.is_empty() { None } else { Some(s) }
         })
-        .unwrap_or_else(|| "Windows|0.0|?".into());
+        .unwrap_or_default();
 
-    let mut parts = os_line.splitn(4, '|');
-    let os_name = parts.next().unwrap_or("Windows");
-    let os_ver = parts.next().unwrap_or("?");
-    let os_arch = parts.next().unwrap_or("");
-    let locale = parts.next().unwrap_or("?");
+    let mut p = raw.splitn(8, '|');
+    let os_name = p.next().filter(|s| !s.is_empty()).unwrap_or("Windows");
+    let os_ver  = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
+    let os_arch = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
+    let locale  = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
+    let cpu     = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
+    let ram     = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
+    let gpu     = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
+    let gpu_drv = p.next().filter(|s| !s.is_empty()).unwrap_or("?");
 
-    // Screen resolution + monitor count.
+    // Screen / DPI / monitor count via Win32 (quicker than another PS roundtrip).
     use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN, SM_CMONITORS};
     let sw = unsafe { GetSystemMetrics(SM_CXSCREEN) };
     let sh = unsafe { GetSystemMetrics(SM_CYSCREEN) };
     let monitors = unsafe { GetSystemMetrics(SM_CMONITORS) };
 
-    // DPI scaling (primary monitor). Critical context for OCR calibration issues.
     use windows::Win32::Graphics::Gdi::{GetDC, GetDeviceCaps, LOGPIXELSX, ReleaseDC};
     let dpi = unsafe {
         let dc = GetDC(None);
@@ -1073,34 +1083,20 @@ fn collect_diagnostics(config: &AppConfig) -> String {
         d
     };
 
-    // App config summary — tells us how the user has configured the timer.
-    let tc = &config.mission_timer;
-    let timer_mode = if tc.mode == "fissure" { "裂缝" } else { "普通" };
-    let alert_method = if tc.alert_method == "toast" { "Windows 通知" } else { "窗口聚焦" };
-    let strip = if tc.strip_frame { "开" } else { "关" };
-    let checkpoint = if tc.checkpoint_auto_focus { "开" } else { "关" };
-    let hp = if tc.hp_alert_enabled { "开" } else { "关" };
-
     format!(
         "操作系统：{os_name} ({os_ver}) {os_arch}\n\
          系统语言：{locale}\n\
-         屏幕：{sw}x{sh} @ {dpi}% DPI（{monitors} 个显示器）\n\
-         ───────────────────\n\
-         游戏窗口：{}\n\
-         计时模式：{timer_mode}\n\
-         OCR 间隔：{}s\n\
-         去黑边：{strip}\n\
-         提醒方式：{alert_method}\n\
-         节点提醒：{checkpoint} ｜ 血量提醒：{hp}",
-        tc.window_title,
-        tc.ocr_interval_secs,
+         CPU：{cpu}\n\
+         内存：{ram}\n\
+         显卡：{gpu}（驱动 {gpu_drv}）\n\
+         屏幕：{sw}x{sh} @ {dpi}% DPI（{monitors} 个显示器）",
     )
 }
 
 /// Send user feedback via SMTP to the developer's QQ mailbox.
 /// Uses the existing tokio runtime (same as the rest of the app).
 #[tauri::command]
-async fn send_feedback(message: String, config: tauri::State<'_, SharedConfig>) -> Result<String, String> {
+async fn send_feedback(message: String) -> Result<String, String> {
     use lettre::message::Message;
     use lettre::message::header::ContentType;
     use lettre::{AsyncTransport, Tokio1Executor};
@@ -1110,7 +1106,7 @@ async fn send_feedback(message: String, config: tauri::State<'_, SharedConfig>) 
     let log_dir = std::env::var("APPDATA")
         .map(|roaming| format!("{}\\com.voxalic.app", roaming))
         .unwrap_or_else(|_| "（无法获取路径）".into());
-    let diag = collect_diagnostics(&config.read().unwrap());
+    let diag = collect_diagnostics();
     let body = format!(
         "【VoxAlic 用户反馈】\n\
          ───────────────────\n\
