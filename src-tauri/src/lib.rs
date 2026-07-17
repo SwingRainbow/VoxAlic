@@ -1049,6 +1049,7 @@ fn open_qq_chat(uin: String) -> bool {
 #[tauri::command]
 async fn send_feedback(message: String) -> Result<String, String> {
     use lettre::message::Message;
+    use lettre::message::header::ContentType;
     use lettre::{AsyncTransport, Tokio1Executor};
     use lettre::transport::smtp::{AsyncSmtpTransport, authentication::Credentials};
 
@@ -1079,6 +1080,7 @@ async fn send_feedback(message: String) -> Result<String, String> {
         .from(SMTP_USER.parse().map_err(|e| format!("发件人格式错误：{e}"))?)
         .to(SMTP_TO.parse().map_err(|e| format!("收件人格式错误：{e}"))?)
         .subject(format!("[VoxAlic v{app_version}] 用户反馈"))
+        .header(ContentType::parse("text/plain; charset=utf-8").unwrap())
         .body(body)
         .map_err(|e| format!("邮件构建失败：{e}"))?;
 
