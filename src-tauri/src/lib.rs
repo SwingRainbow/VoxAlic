@@ -1038,6 +1038,35 @@ fn open_qq_chat(uin: String) -> bool {
     }
 }
 
+/// Gather system diagnostics for feedback emails (Windows only).
+fn collect_diagnostics() -> String {
+    // OS version via PowerShell — simpler than verbose windows-rs registry calls.
+    let os_line = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NoLogo", "-Command",
+            r#"(Get-CimInstance Win32_OperatingSystem | ForEach-Object { "$($_.Caption.Trim())|$($_.Version)|$($_.OSArchitecture)" })"#])
+        .output()
+        .ok()
+        .and_then(|o| {
+            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if s.is_empty() { None } else { Some(s) }
+        })
+        .unwrap_or_else(|| "Windows|0.0|?".into());
+
+    let mut parts = os_line.splitn(3, '|');
+    let os_name = parts.next().unwrap_or("Windows");
+    let os_ver = parts.next().unwrap_or("?");
+    let os_arch = parts.next().unwrap_or("");
+
+    // Screen resolution — already have Win32_UI_WindowsAndMessaging.
+    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+    let sw = unsafe { GetSystemMetrics(SM_CXSCREEN) };
+    let sh = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+
+    format!(
+        "操作系统：{os_name} ({os_ver}) {os_arch}\n屏幕分辨率：{sw}x{sh}",
+    )
+}
+
 /// Send user feedback via SMTP to the developer's QQ mailbox.
 /// Uses the existing tokio runtime (same as the rest of the app).
 #[tauri::command]
@@ -1051,20 +1080,21 @@ async fn send_feedback(message: String) -> Result<String, String> {
     let log_dir = std::env::var("APPDATA")
         .map(|roaming| format!("{}\\com.voxalic.app", roaming))
         .unwrap_or_else(|_| "（无法获取路径）".into());
+    let diag = collect_diagnostics();
     let body = format!(
         "【VoxAlic 用户反馈】\n\
          ───────────────────\n\
          {}\n\
          ───────────────────\n\
-         版本：{}\n\
-         平台：{} {}\n\
+         版本：v{}\n\
+         {diag}\n\
+         架构：{}\n\
          时间：{}\n\
          \n\
          📂 日志文件位于：{}\\voxalic.log\n\
          （请附上日志文件，便于排查问题）",
         message,
         app_version,
-        std::env::consts::OS,
         std::env::consts::ARCH,
         chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
         log_dir,
