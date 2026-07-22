@@ -116,8 +116,9 @@ export function setupCalibration() {
       ctx.font = '14px sans-serif';
       ctx.fillText(label, b.x + 2, Math.max(14, b.y - 4));
     };
-    draw(boxes.time, '#4CAF50', '时间');
-    draw(boxes.ls, '#FF9800', '维生');
+    const cs = getComputedStyle(document.documentElement);
+    draw(boxes.time, cs.getPropertyValue('--calib-time').trim() || '#2d7a3a', '时间');
+    draw(boxes.ls, cs.getPropertyValue('--calib-life-support').trim() || '#d46a00', '维生');
   }
 
   // Map a pointer event to canvas backing-store pixel coordinates.

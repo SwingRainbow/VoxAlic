@@ -24,13 +24,25 @@ const FILE_NAME: &str = "market_items.json";
 // ── Shared HTTP client (reused — TLS / DNS overhead paid once) ──────────────
 
 pub(crate) fn market_client() -> &'static reqwest::Client {
+    /// Primary client using system DNS.
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .user_agent("VoxAlic/1.0")
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("reqwest::Client::build")
+    })
+}
+
+fn market_fallback_client() -> &'static reqwest::Client {
+    /// Fallback client with hardcoded Cloudflare IPs for DNS-hijack scenarios.
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         use std::net::{IpAddr, Ipv4Addr, SocketAddr};
         let real_ips: Vec<SocketAddr> = [
             "104.26.0.182", "104.26.1.182", "172.67.75.162",
         ].iter().map(|ip| SocketAddr::new(IpAddr::V4(ip.parse::<Ipv4Addr>().unwrap()), 443)).collect();
-
         reqwest::Client::builder()
             .user_agent("VoxAlic/1.0")
             .timeout(std::time::Duration::from_secs(30))
@@ -328,12 +340,16 @@ fn search_local(cache: &MarketCache, query: &str, lang: &str) -> Vec<MarketItemS
 
 async fn fetch_detail(slug: &str) -> Result<CachedDetail, String> {
     let url = format!("{}/item/{}", MARKET_API_BASE, slug);
-    let resp = market_client()
+    let mut resp = market_client()
         .get(&url)
         .header("Language", "zh-hans")
         .send()
-        .await
-        .map_err(|e| format!("API 无响应: {e}"))?;
+        .await;
+    if resp.is_err() {
+        warn!("[wm] primary DNS failed, retrying with fallback IPs");
+        resp = market_fallback_client().get(&url).header("Language", "zh-hans").send().await;
+    }
+    let resp = resp.map_err(|e| format!("API 无响应: {e}"))?;
     if !resp.status().is_success() {
         warn!("[wm] fetch_detail '{slug}' HTTP {}", resp.status());
         return Err(format!("API 返回 HTTP {}", resp.status()));
@@ -353,14 +369,18 @@ async fn fetch_detail(slug: &str) -> Result<CachedDetail, String> {
 
 async fn fetch_orders(slug: &str) -> Result<(Vec<MarketOrder>, Vec<MarketOrder>), String> {
     let url = format!("{}/orders/item/{}", MARKET_API_BASE, slug);
-    let resp = market_client()
+    let mut resp = market_client()
         .get(&url)
         .timeout(std::time::Duration::from_secs(120))
         .header("Language", "zh-hans")
         .header("Platform", "pc")
         .send()
-        .await
-        .map_err(|e| format!("API 无响应: {e}"))?;
+        .await;
+    if resp.is_err() {
+        warn!("[wm] primary DNS failed, retrying with fallback IPs");
+        resp = market_fallback_client().get(&url).timeout(std::time::Duration::from_secs(120)).header("Language", "zh-hans").header("Platform", "pc").send().await;
+    }
+    let resp = resp.map_err(|e| format!("API 无响应: {e}"))?;
     if !resp.status().is_success() {
         warn!("[wm] fetch_orders '{slug}' HTTP {}", resp.status());
         return Err(format!("API 返回 HTTP {}", resp.status()));
@@ -487,14 +507,18 @@ pub async fn refresh_market_cache(
     cache: tauri::State<'_, SharedMarketCache>,
     app_handle: tauri::AppHandle,
 ) -> Result<usize, String> {
-    let resp = market_client()
+    let mut resp = market_client()
         .get(ITEMS_URL)
-        .timeout(std::time::Duration::from_secs(1800))
+        .timeout(std::time::Duration::from_secs(60))
         .header("Language", "zh-hans")
         .header("Platform", "pc")
         .send()
-        .await
-        .map_err(|e| format!("下载失败: {e}"))?;
+        .await;
+    if resp.is_err() {
+        warn!("[wm] primary DNS failed, retrying with fallback IPs");
+        resp = market_fallback_client().get(ITEMS_URL).timeout(std::time::Duration::from_secs(60)).header("Language", "zh-hans").header("Platform", "pc").send().await;
+    }
+    let resp = resp.map_err(|e| format!("下载失败: {e}"))?;
     if !resp.status().is_success() {
         warn!("[wm] cache refresh HTTP {}", resp.status());
         return Err(format!("API 返回 HTTP {}", resp.status()));
@@ -509,24 +533,21 @@ pub async fn refresh_market_cache(
             let slug = v["slug"].as_str().unwrap_or("").to_string();
             let name = v["i18n"]["en"]["name"]
                 .as_str()
-                .unwrap_or_else(|| v["i18n"]["zh-hans"]["name"].as_str().unwrap_or(&slug))
+                .unwrap_or(&slug)
                 .to_string();
             let icon = v["i18n"]["en"]["icon"]
                 .as_str()
-                .unwrap_or_else(|| v["i18n"]["zh-hans"]["icon"].as_str().unwrap_or(""))
+                .unwrap_or("")
                 .to_string();
-            let mr = v["reqMasteryRank"].as_u64().map(|v| v as u8);
             let max_rank = v["maxRank"].as_u64().map(|v| v as u8);
             let bulk_tradable = v["bulkTradable"].as_bool().unwrap_or(false);
             let tags: Vec<String> = v["tags"]
                 .as_array()
                 .map(|a| a.iter().filter_map(|t| t.as_str().map(String::from)).collect())
                 .unwrap_or_default();
-            let name_zh = v["i18n"]["zh-hans"]["name"]
-                .as_str()
-                .unwrap_or_else(|| v["i18n"]["en"]["name"].as_str().unwrap_or(&slug))
-                .to_string();
-            MarketCachedItem { id, slug, name, name_zh, icon, mr, max_rank, bulk_tradable, tags }
+            // API only returns `en` i18n; zh-hans keys never present.
+            let name_zh = name.clone();
+            MarketCachedItem { id, slug, name, name_zh, icon, mr: None, max_rank, bulk_tradable, tags }
         })
         .collect();
 

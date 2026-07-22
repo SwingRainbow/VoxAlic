@@ -42,7 +42,8 @@ pub fn init(app_data_dir: &Path) {
     let log_path = app_data_dir.join("voxalic.log");
     let file = OpenOptions::new()
         .create(true)
-        .append(true)
+        .write(true)
+        .truncate(true)
         .open(&log_path)
         .unwrap_or_else(|e| {
             eprintln!("[log] cannot open {}: {e}", log_path.display());

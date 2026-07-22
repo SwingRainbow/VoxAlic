@@ -6,12 +6,12 @@
   <title>订阅提醒</title>
   <style>
     :root {
-      --np-bg: #1c1f26;
-      --np-bg2: #242832;
-      --np-border: #353a45;
-      --np-text: #e6e6e6;
-      --np-dim: #9aa0ab;
-      --np-gold: #ffb929;
+      --np-bg: #FFFFF0;
+      --np-bg2: #F5F5E8;
+      --np-border: #D8D8C0;
+      --np-text: #2a2a24;
+      --np-dim: #6a6858;
+      --np-gold: #C01E25;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -55,7 +55,7 @@
       padding: 6px;
     }
     #np-list::-webkit-scrollbar { width: 8px; }
-    #np-list::-webkit-scrollbar-thumb { background: #3a3f4b; border-radius: 4px; }
+    #np-list::-webkit-scrollbar-thumb { background: #d0d0c0; border-radius: 4px; }
     .np-empty {
       color: var(--np-dim);
       text-align: center;
@@ -72,10 +72,10 @@
       cursor: pointer;
       transition: background .12s;
     }
-    .np-item:hover { background: #2d323e; }
-    .np-item.np-fissure { border-left-color: #4a90d9; }
+    .np-item:hover { background: #EDEDD8; }
+    .np-item.np-fissure { border-left-color: var(--np-gold); }
     .np-item.np-cycle   { border-left-color: var(--np-gold); }
-    .np-item.np-arbitration { border-left-color: #d9534f; }
+    .np-item.np-arbitration { border-left-color: var(--np-gold); }
     .np-icon { font-size: 18px; line-height: 1.2; flex: 0 0 auto; }
     .np-body { flex: 1 1 auto; min-width: 0; }
     .np-title {

@@ -132,7 +132,8 @@ export function renderMarketResults(items: MarketItemSummary[]) {
 export function renderMarketDetail(data: MarketItemFull) {
   _lazyObservers.forEach(o => o.disconnect());
   _lazyObservers = [];
-  S._lastMarketDetail = data;  // cache for language-switch re-render without re-fetch
+  S._lastMarketDetail = data;  // cached for slug-match re-render without re-fetch
+  S._lastMarketDetailTs = Date.now();
 
   const container = document.getElementById('market-detail')!;
   container.classList.remove('hidden');
@@ -213,7 +214,6 @@ export function renderMarketDetail(data: MarketItemFull) {
 }
 
 export function showMarketSkeleton() {
-  S._lastMarketDetail = null;
   const container = document.getElementById('market-detail')!;
   container.classList.remove('hidden');
   container.innerHTML = `
@@ -650,7 +650,7 @@ export function orderFormHTML(slug: string, side: 'sell' | 'buy'): string {
   const buyOrders = S._lastMarketDetail?.buy_orders ?? [];
   let refHtml = '';
   if (sellOrders.length > 0 && buyOrders.length > 0) {
-    refHtml = `<div class="market-order-form-ref">当前行情: 最低卖价 <b style="color:#8fcf8f">${sellOrders[0].platinum}p</b> · 最高买价 <b style="color:#8f8fcf">${buyOrders[0].platinum}p</b></div>`;
+    refHtml = `<div class="market-order-form-ref">当前行情: 最低卖价 <b class="market-ref-sell">${sellOrders[0].platinum}p</b> · 最高买价 <b class="market-ref-buy">${buyOrders[0].platinum}p</b></div>`;
   }
 
   let existingHtml = '';
@@ -792,8 +792,16 @@ export async function doMarketSearch(query: string) {
   }
 }
 
+const DETAIL_TTL_MS = 60_000;
+
 export async function openMarketItem(slug: string) {
   S.marketOpenSlug = slug;
+  // Cache hit: same slug within TTL → instant render.
+  if (S._lastMarketDetail?.item.slug === slug
+      && Date.now() - S._lastMarketDetailTs < DETAIL_TTL_MS) {
+    renderMarketDetail(S._lastMarketDetail);
+    return;
+  }
   const reqId = ++S.marketReqId;
   showMarketSkeleton();
   // Hide search results while viewing detail
@@ -811,7 +819,6 @@ export async function openMarketItem(slug: string) {
 
 export function closeMarketDetail() {
   S.marketOpenSlug = null;
-  S._lastMarketDetail = null;
   ++S.marketReqId;
   document.getElementById('market-detail')!.classList.add('hidden');
   // Restore search results

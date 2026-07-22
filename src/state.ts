@@ -277,6 +277,7 @@ export const S = {
   marketSearchTimer: null as ReturnType<typeof setTimeout> | null,
   marketLang: 'en' as string,            // 'en' | 'zh'
   _lastMarketDetail: null as MarketItemFull | null,  // cached for language-switch re-render
+  _lastMarketDetailTs: 0 as number,                  // Date.now() when cached
   _lastMarketResults: [] as MarketItemSummary[],     // last search results (for hot-switch)
 
   // Market auth & orders state

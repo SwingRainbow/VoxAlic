@@ -45,8 +45,7 @@ pub fn init(app_data_dir: &Path) {
             }
         }
     }
-    // Force lazy init of the embedded default so `count()` is meaningful.
-    let _ = cell();
+    // Embedded default is loaded lazily on first translate() call.
 }
 
 /// Translate an asset path (e.g. a Baro `ItemType`) to 简中, if known.

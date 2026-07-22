@@ -530,8 +530,24 @@ window.addEventListener('DOMContentLoaded', () => {
     logContent.innerHTML = '';
   });
 
+  // ── 启动过渡 ──────────────────────────────────────────────
+  let _splashStart = Date.now(), _splashHidden = false;
+  const SPLASH_MIN_MS = 2500;
+  function _hideSplash() {
+    if (_splashHidden) return;
+    _splashHidden = true;
+    const el = document.getElementById('splash-overlay');
+    if (!el) return;
+    const elapsed = Date.now() - _splashStart;
+    const delay = Math.max(0, SPLASH_MIN_MS - elapsed);
+    const fade = () => { el.style.opacity = '0'; setTimeout(() => el.remove(), 350); };
+    delay > 0 ? setTimeout(fade, delay) : fade();
+  }
+  setTimeout(_hideSplash, 10_000);
+
   // Tauri events
   listen<AppStatePayload>('worldstate-update', (event) => {
+    _hideSplash();
     handleUpdate(event.payload);
   });
 

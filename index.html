@@ -7,6 +7,13 @@
   <link rel="stylesheet" href="/src/styles.css" />
 </head>
 <body>
+  <!-- 启动过渡 — 首次 worldstate-update 或 10s 后自动消失 -->
+  <div id="splash-overlay">
+    <div class="splash-title">V O X A L I C</div>
+    <div class="splash-dots"><span></span><span></span><span></span></div>
+    <div class="splash-sub">正在连接 Warframe 世界状态…</div>
+  </div>
+
   <div class="tabs">
     <button class="tab-btn active" data-tab="cycles">世界时间</button>
     <button class="tab-btn" data-tab="fissures">虚空裂缝</button>
