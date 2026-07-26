@@ -2,11 +2,12 @@ use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 use chrono::Local;
 use crate::capture::{self, ROIConfig};
+use crate::cnn::Cnn;
 use crate::config::AppConfig;
 use crate::models::MissionTimerPayload;
 use crate::ocr::{DigitTemplates, recognize_digits};
 
-pub const MATCH_THRESHOLD: f32 = 0.70;
+pub const MATCH_THRESHOLD: f32 = 0.60;
 const MAX_REJECT: u32 = 3;
 const CHECKPOINT_INTERVAL_SECS: u32 = 300;
 const LIFE_SUPPORT_RED_THRESHOLD: f32 = 1.0;
@@ -436,6 +437,10 @@ pub fn start_timer_thread(
             shared.write().unwrap().payload.window_status = "检测到游戏窗口".into();
         }
 
+        // Load CNN classifier for dual-engine digit recognition
+        let mut cnn = Cnn::load();
+        log(&log_tx, "CNN 分类器已加载");
+
         let mut was_minimized = false;
         let mut had_valid_window = hwnd != 0;
         let mut consecutive_capture_fails = 0u32;
@@ -500,7 +505,7 @@ pub fn start_timer_thread(
                 };
 
                 if let Some((pixels, w, h)) = capture_result {
-                    let ocr_result = recognize_digits(&pixels, w, h, &templates, MATCH_THRESHOLD);
+                    let ocr_result = recognize_digits(&pixels, w, h, &templates, MATCH_THRESHOLD, None);
                     if let Some(ref result) = ocr_result {
                         log(&log_tx, &format!("OCR: {} (识别)", result));
                     } else {
@@ -562,7 +567,7 @@ pub fn start_timer_thread(
                     if let Some((pixels, w, h)) = capture_result {
                         consecutive_capture_fails = 0;
                         let ocr_result =
-                            recognize_digits(&pixels, w, h, &templates, MATCH_THRESHOLD);
+                            recognize_digits(&pixels, w, h, &templates, MATCH_THRESHOLD, Some(&mut cnn));
 
                         // Log raw OCR result (even if it will be rejected)
                         if let Some(ref result) = ocr_result {
@@ -573,6 +578,8 @@ pub fn start_timer_thread(
                             } else {
                                 log(&log_tx, &format!("OCR: {} (识别)", result));
                             }
+                        } else {
+                            log(&log_tx, &format!("OCR: 无结果 (capture {}x{})", w, h));
                         }
 
                         let mut state = shared.write().unwrap();
@@ -590,6 +597,9 @@ pub fn start_timer_thread(
                     } else {
                         // Capture failed or returned a black frame.
                         consecutive_capture_fails += 1;
+                        if consecutive_capture_fails == 1 {
+                            log(&log_tx, "捕获失败 (窗口遮挡/黑帧/无游戏画面)");
+                        }
                     }
 
                     // ── Capture HP / life support ROI (dual ROI by mode) ──

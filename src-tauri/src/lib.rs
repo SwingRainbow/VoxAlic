@@ -1,5 +1,6 @@
 mod api;
 mod capture;
+mod cnn;
 mod config;
 mod item_i18n;
 mod log_init;
@@ -824,7 +825,7 @@ fn test_recognize(
     let (pixels, cw, ch) = capture::capture_roi_stripped(hwnd, &roi, strip_frame)
         .ok_or_else(|| "截图失败".to_string())?;
     let tmpl: &DigitTemplates = templates.inner();
-    Ok(ocr::recognize_digits(&pixels, cw, ch, tmpl, mission_timer::MATCH_THRESHOLD)
+    Ok(ocr::recognize_digits(&pixels, cw, ch, tmpl, mission_timer::MATCH_THRESHOLD, None)
         .unwrap_or_else(|| "无结果".into()))
 }
 

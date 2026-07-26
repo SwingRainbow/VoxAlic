@@ -28,20 +28,6 @@ import {
 window.addEventListener('DOMContentLoaded', () => {
   // Disable the webview right-click context menu.
   document.addEventListener('contextmenu', e => e.preventDefault());
-  // Lock the 任务计时 tab in production builds (the shipped installer) but keep
-  // it usable during local development (`tauri dev`). Vite sets PROD only for
-  // `tauri build` output. A self-use "unlocked" installer can be produced by
-  // building with VITE_UNLOCK_TIMER=1 (keeps the timer enabled in a prod build).
-  if ((import.meta as any).env?.PROD && (import.meta as any).env?.VITE_UNLOCK_TIMER !== '1') {
-    const timerTab = document.querySelector('.tab-btn[data-tab="timer"]') as HTMLButtonElement | null;
-    if (timerTab) {
-      timerTab.classList.add('locked');
-      timerTab.disabled = true;
-      timerTab.title = '该功能暂未开放';
-      timerTab.textContent = '任务计时 🔒';
-    }
-  }
-
   // Tab switching
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -266,8 +252,53 @@ window.addEventListener('DOMContentLoaded', () => {
     invoke('set_config', { config: newCfg });
   });
 
+  // ── Window selection for timer tab ──
+  const windowSelect = document.getElementById('window-select') as HTMLSelectElement;
+  const windowCount = document.getElementById('window-count')!;
+  const windowStatus = document.getElementById('window-status')!;
+
+  async function refreshWindowList() {
+    try {
+      const wins: { title: string; hwnd: number; pid: number }[] = await invoke('list_windows');
+      windowSelect.innerHTML = wins.map((w, i) =>
+        `<option value="${w.hwnd}"${i === 0 ? ' selected' : ''}>${w.title} (PID ${w.pid})</option>`
+      ).join('');
+      windowCount.textContent = wins.length ? `${wins.length} 个窗口` : '';
+      if (wins.length && windowStatus.textContent === '检测中...') {
+        windowStatus.textContent = '已检测到游戏窗口';
+        windowStatus.className = 'window-status found';
+      }
+      if (!wins.length) {
+        windowStatus.textContent = '未检测到游戏窗口';
+        windowStatus.className = 'window-status not-found';
+      }
+    } catch (err) {
+      windowCount.textContent = '';
+      windowStatus.textContent = '枚举失败';
+      windowStatus.className = 'window-status not-found';
+    }
+  }
+
+  windowSelect.addEventListener('change', () => {
+    const hwnd = parseInt(windowSelect.value);
+    if (!isNaN(hwnd) && S.currentConfig) {
+      invoke('select_window', { hwnd });
+    }
+  });
+
+  document.getElementById('btn-refresh-windows')!.addEventListener('click', refreshWindowList);
+
+  // Refresh window list when entering the timer tab (via tab button click).
+  document.querySelector('.tab-btn[data-tab="timer"]')!.addEventListener('click', () => {
+    refreshWindowList();
+  });
+
   // Timer: start/stop/reset buttons
   document.getElementById('btn-timer-start')!.addEventListener('click', () => {
+    if (!windowStatus.textContent!.includes('检测到')) {
+      alert('请先在游戏窗口下拉框中选择一个 Warframe 窗口');
+      return;
+    }
     invoke('timer_command', { command: 'start' });
   });
   document.getElementById('btn-timer-stop')!.addEventListener('click', () => {

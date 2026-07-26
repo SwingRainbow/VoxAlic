@@ -1,0 +1,11 @@
+filename                                      label  pred  match
+----------------------------------------------------------------------
+0.00_1785025391130_NoResult.png                0341  3785    ERR
+Traceback (most recent call last):
+  File "C:\Users\Administrator\Desktop\tauri-warframe-monitor\scripts\eval_cnn.py", line 38, in <module>
+    patch = crop_cnn_patch(gray, cx, cy)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Desktop\tauri-warframe-monitor\scripts\train_cnn_v5.py", line 98, in crop_cnn_patch
+    patch[py0:py0 + (oy1 - oy0), px0:px0 + (ox1 - ox0)] = gray[oy0:oy1, ox0:ox1]
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: could not broadcast input array from shape (40,0) into shape (40,14)

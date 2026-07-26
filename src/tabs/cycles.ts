@@ -94,7 +94,7 @@ export function renderBountyPanel(bounties: BountyInfo[]) {
         const rows: string[] = [];
         for (let r = 0; r < items.length; r += BOUNTY_COLS) {
           const cells = items.slice(r, r + BOUNTY_COLS).map(x =>
-            `<div class="rw-cell ${rarityCls(x.rarity)}" title="${x.name} · ${x.chance}%">${x.name}</div>`);
+            `<div class="rw-cell" title="${x.name} · ${x.chance}%"><span class="${rarityCls(x.rarity)}">${x.name}</span></div>`);
           while (cells.length < BOUNTY_COLS) cells.push('<div class="rw-cell"></div>');
           rows.push(`<div class="rw-row${(r / BOUNTY_COLS) % 2 ? ' alt' : ''}">${cells.join('')}</div>`);
         }
