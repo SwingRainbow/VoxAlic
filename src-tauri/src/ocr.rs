@@ -4,6 +4,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Digit X-offsets from colon centre, as fraction of ROI width.
+/// Must match DIGIT_RATIOS in train_cnn_v5.py.
+const DIGIT_RATIOS: [f32; 4] = [-0.305, -0.153, 0.115, 0.267];
+
 pub struct DigitTemplate {
     pub digit: u8,
     pub pixels: Vec<f32>, // grayscale, normalized 0.0-1.0
@@ -113,6 +117,53 @@ fn otsu_threshold(gray_vals: &[f32]) -> f32 {
 /// High-score frames (best NCC ≥ 0.80) are saved to `training_frames/` and
 /// low-score frames (< 0.75) to `low_score_frames/`, both under
 /// `%APPDATA%/com.voxalic.app/`.
+/// Mean pixel value in a rectangular region of the grayscale image.
+fn region_mean(gray: &[f32], w: usize, y0: usize, y1: usize, x0: usize, x1: usize) -> f32 {
+    let mut sum = 0.0f32;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            sum += gray[y * w + x];
+        }
+    }
+    let n = ((y1 - y0) * (x1 - x0)) as f32;
+    if n > 0.0 { sum / n } else { 0.0 }
+}
+
+/// Find colon ":" in a grayscale ROI — two vertically-aligned bright dots
+/// separated by a dark gap. Scans a ±20px window around `(est_cx, est_cy)`.
+fn find_colon(gray: &[f32], w: usize, h: usize, est_cx: usize, est_cy: usize) -> (usize, usize) {
+    let x0 = 5usize.max(est_cx.saturating_sub(20));
+    let x1 = (w.saturating_sub(5)).min(est_cx + 20);
+    let y0 = 5usize.max(est_cy.saturating_sub(20));
+    let y1 = (h.saturating_sub(5)).min(est_cy + 20);
+
+    let mut best_score = -1.0f32;
+    let mut best_cx = est_cx;
+    let mut best_cy = est_cy;
+
+    let mut cy = y0;
+    while cy < y1 {
+        let mut cx = x0;
+        while cx < x1 {
+            if cy >= 10 && cy + 10 < h && cx >= 2 && cx + 2 < w {
+                let upper = region_mean(gray, w, cy - 8, cy - 3, cx - 2, cx + 3);
+                let mid   = region_mean(gray, w, cy - 2, cy + 3, cx - 2, cx + 3);
+                let lower = region_mean(gray, w, cy + 3, cy + 8, cx - 2, cx + 3);
+                let score = upper + lower - 2.0 * mid;
+                if score > best_score {
+                    best_score = score;
+                    best_cx = cx;
+                    best_cy = cy;
+                }
+            }
+            cx += 2;
+        }
+        cy += 2;
+    }
+
+    (best_cx, best_cy)
+}
+
 /// Filter NCC detections to keep only digits in the same horizontal row.
 /// Timer digits share a Y coordinate; life-support / buff digits sit elsewhere.
 fn filter_same_row(
@@ -168,7 +219,7 @@ pub fn recognize_digits(
     match_threshold: f32,
     mut cnn: Option<&mut Cnn>,
 ) -> Option<String> {
-    // BGR → grayscale, then Otsu → binary
+    // BGR → grayscale
     let gray_vals: Vec<f32> = roi_pixels
         .chunks(3)
         .map(|rgb| {
@@ -179,15 +230,58 @@ pub fn recognize_digits(
         })
         .collect();
 
+    let img_w = roi_w as usize;
+    let img_h = roi_h as usize;
+
+    // ── Primary: colon-anchored CNN (matches training pipeline) ──
+    if let Some(ref mut cnn) = cnn {
+        let est_cx = img_w / 2;
+        let est_cy = img_h / 2;
+        let (colon_cx, colon_cy) = find_colon(&gray_vals, img_w, img_h, est_cx, est_cy);
+
+        let colon_ok = (colon_cx as isize - est_cx as isize).abs() <= 30
+            && (colon_cy as isize - est_cy as isize).abs() <= 30;
+
+        if colon_ok {
+            let mut digits = String::new();
+            for &ratio in &DIGIT_RATIOS {
+                let cx = (colon_cx as f32 + ratio * img_w as f32) as usize;
+                let cy = colon_cy;
+                let patch = extract_cnn_patch(&gray_vals, img_w, img_h, cx, cy, 1, 1);
+                let (cls, _conf) = cnn.classify(&patch);
+                if cls < 10 {
+                    digits.push((cls + b'0') as char);
+                }
+            }
+
+            let len = digits.len();
+            if len >= 2 {
+                let seconds = &digits[len - 2..];
+                if let Ok(sec) = seconds.parse::<u32>() {
+                    if sec < 60 {
+                        let minutes = &digits[..len - 2];
+                        let result = if minutes.is_empty() {
+                            format!("0:{}", seconds)
+                        } else {
+                            format!("{}:{}", minutes, seconds)
+                        };
+                        eprintln!("[OCR] colon: {}", result);
+                        save_training_frame(&gray_vals, roi_w, roi_h, 0.90, &result);
+                        return Some(result);
+                    }
+                }
+            }
+            eprintln!("[OCR] colon CNN rejected (digits={})", digits);
+        }
+    }
+
+    // ── Fallback: NCC + Otsu pipeline ──
     let thresh = otsu_threshold(&gray_vals);
 
     let binary: Vec<f32> = gray_vals
         .iter()
         .map(|&g| if g > thresh { 1.0 } else { 0.0 })
         .collect();
-
-    let img_w = roi_w as usize;
-    let img_h = roi_h as usize;
 
     let mut all_detections: Vec<(f32, usize, usize, u8, usize, usize)> = Vec::new();
 
@@ -206,7 +300,6 @@ pub fn recognize_digits(
         }
     }
 
-    // Save low-score frames for training data collection
     let best_score = all_detections
         .iter()
         .map(|d| d.0)
@@ -226,7 +319,6 @@ pub fn recognize_digits(
     let nms_count = kept.len();
 
     // Same-row filter: timer digits share a horizontal line.
-    // Life-support digits occupy different rows → excluded.
     kept = filter_same_row(&kept);
 
     let row_count = kept.len();

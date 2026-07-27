@@ -317,11 +317,6 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Single capture button
-  document.getElementById('btn-single-capture')!.addEventListener('click', () => {
-    invoke('single_capture');
-  });
-
   // OCR interval
   const ocrInterval = document.getElementById('ocr-interval') as HTMLInputElement;
   ocrInterval.addEventListener('change', () => {

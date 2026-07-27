@@ -7,7 +7,7 @@ use crate::config::AppConfig;
 use crate::models::MissionTimerPayload;
 use crate::ocr::{DigitTemplates, recognize_digits};
 
-pub const MATCH_THRESHOLD: f32 = 0.60;
+pub const MATCH_THRESHOLD: f32 = 0.55;
 const MAX_REJECT: u32 = 3;
 const CHECKPOINT_INTERVAL_SECS: u32 = 300;
 const LIFE_SUPPORT_RED_THRESHOLD: f32 = 1.0;
@@ -444,6 +444,7 @@ pub fn start_timer_thread(
         let mut was_minimized = false;
         let mut had_valid_window = hwnd != 0;
         let mut consecutive_capture_fails = 0u32;
+        let mut last_hwnd_refresh = Instant::now();
         // Carries a SingleCapture request that arrived during the inner wait
         // loop over to the next iteration's capture path.
         let mut pending_single_capture = false;
@@ -463,6 +464,22 @@ pub fn start_timer_thread(
                     had_valid_window = false;
                 }
                 was_minimized = false;
+            }
+
+            // Periodic window re-resolve: refresh HWND every 10 s to catch
+            // stale handles (game restart, title change) without waiting for
+            // 5 consecutive capture failures.
+            if last_hwnd_refresh.elapsed().as_secs() >= 10 && hwnd != 0 {
+                let cfg = config.read().unwrap();
+                let fresh = crate::window::resolve_hwnd(&cfg.mission_timer.window_title);
+                drop(cfg);
+                if fresh != 0 && fresh != hwnd {
+                    log(&log_tx, &format!("窗口句柄刷新: {} → {}", hwnd, fresh));
+                    hwnd = fresh;
+                    consecutive_capture_fails = 0;
+                    shared.write().unwrap().payload.window_status = "检测到游戏窗口".into();
+                }
+                last_hwnd_refresh = Instant::now();
             }
 
             // Process any pending commands (non-blocking). Picks up a single

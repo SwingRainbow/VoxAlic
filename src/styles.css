@@ -86,21 +86,21 @@
   --arb-mission: #3a3a34;
 
   /* ── Baro 奸商 ──────────────────────────────────────────── */
-  --baro-bg: #F8F4FC;
-  --baro-border: #D8CCE8;
-  --baro-left: #7a5fa8;
-  --baro-title: #5a3a7a;
-  --baro-loc: #8a7a90;
+  --baro-bg: #2a2a24;
+  --baro-border: #3a3a34;
+  --baro-left: #C01E25;
+  --baro-title: #E8E8D8;
+  --baro-loc: #999990;
   --baro-countdown: #C01E25;
   --baro-badge-bg: #d4a020;
   --baro-badge-text: #fff;
   --baro-badge-glow: 0 0 6px rgba(192,30,37,0.25);
-  --baro-th-bg: #F0E8F5;
-  --baro-th-border: #D8CCE0;
-  --baro-td-border: #E8DCF0;
-  --baro-td-text: #3a3a34;
+  --baro-th-bg: rgba(255,255,255,0.06);
+  --baro-th-border: #3a3a34;
+  --baro-td-border: #333330;
+  --baro-td-text: #C8C8C0;
   --baro-ducats: #C01E25;
-  --baro-credits: #3a7abc;
+  --baro-credits: #6ab4f0;
 
   /* ── 计时器 ─────────────────────────────────────────────── */
   --timer-digit: #C01E25;
@@ -116,8 +116,6 @@
   --btn-stop-hover: #e07800;
   --btn-reset: #888;
   --btn-reset-hover: #999;
-  --btn-single: #1565C0;
-  --btn-single-hover: #1976D2;
   --btn-sm-hover: #e0e0d8;
 
   /* ── 日志 ───────────────────────────────────────────────── */
@@ -547,7 +545,7 @@ body {
 }
 .baro-panel.waiting { opacity: 0.9; }
 .baro-panel.clickable { cursor: pointer; transition: border-color 0.15s, background 0.15s; }
-.baro-panel.clickable:hover { border-color: var(--baro-left); background: #f0e8f8; }
+.baro-panel.clickable:hover { border-color: var(--baro-left); background: rgba(192,30,37,0.12); }
 .baro-panel.open { border-color: var(--baro-left); }
 .baro-head {
   display: flex;
@@ -578,7 +576,7 @@ body {
   font-size: 11px;
   color: var(--baro-loc);
   padding: 1px 7px;
-  background: rgba(138, 111, 181, 0.18);
+  background: rgba(255,255,255,0.08);
   border-radius: 10px;
 }
 .baro-countdown {
@@ -594,9 +592,45 @@ body {
   font-size: 11px;
   color: var(--baro-loc);
 }
+.baro-progress-row {
+  margin: 8px 0 4px;
+}
+.baro-progress-track {
+  position: relative;
+  height: 36px;
+  --p: 0%;
+}
+.baro-icon-left {
+  position: absolute;
+  height: 36px; width: auto;
+  left: var(--p);
+  top: 0;
+  transition: left 0.5s linear;
+  z-index: 1;
+}
+.baro-icon-left.gone { opacity: 0; transition: opacity 0.3s ease-out; }
+.baro-icon-right {
+  position: absolute;
+  height: 36px; width: auto;
+  right: 0; top: 0;
+  transition: opacity 0.3s ease-out;
+}
+.baro-icon-right.gone { opacity: 0; }
+.baro-progress-dots {
+  position: absolute;
+  left: calc(var(--p) + 22px);
+  right: 38px;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 6px;
+  background: radial-gradient(circle, #C8C8C0 1.5px, transparent 1.5px);
+  background-size: 6px 6px;
+  background-repeat: repeat-x;
+  transition: left 0.5s linear;
+}
 .baro-toggle {
   font-size: 11px;
-  color: #9a8ab0;
+  color: #888880;
   margin-left: 6px;
   white-space: nowrap;
 }
@@ -1597,6 +1631,13 @@ details.settings-section[open] summary.settings-section-title::after {
   line-height: 1.1;
 }
 .timer-ocr-label { font-size: 10px; color: var(--dim); }
+.timer-model-badge {
+  font-size: 9px; font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-a08);
+  padding: 1px 5px; border-radius: 3px;
+  letter-spacing: 0.5px;
+}
 .timer-ocr-digits {
   font-size: 28px;
   font-family: 'Consolas', 'Courier New', monospace;
@@ -1642,8 +1683,6 @@ details.settings-section[open] summary.settings-section-title::after {
 .timer-btn.stop:hover { background: var(--btn-stop-hover); }
 .timer-btn.reset { background: var(--btn-reset); }
 .timer-btn.reset:hover { background: var(--btn-reset-hover); }
-.timer-btn.single { background: var(--btn-single); }
-.timer-btn.single:hover { background: var(--btn-single-hover); }
 
 /* Life Support */
 .life-support-indicator { display: flex; align-items: center; gap: 8px; }

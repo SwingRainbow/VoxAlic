@@ -239,6 +239,13 @@ export function renderBaro(baroList: BaroInfo[]) {
             <span class="baro-loc">${baro.location}</span>
             <span class="baro-countdown" id="baro-cd-${cdId}">${cdLabel} ${baro.remain_str}</span>
           </div>
+          <div class="baro-progress-row" id="baro-pr-${cdId}">
+            <div class="baro-progress-track" id="baro-pt-${cdId}">
+              <img class="baro-icon-left" id="baro-bi-${cdId}" src="/Baro.png" alt="Baro">
+              <div class="baro-progress-dots" id="baro-pg-${cdId}"></div>
+              <img class="baro-icon-right" id="baro-ri-${cdId}" src="/Lotus.png" alt="Relay">
+            </div>
+          </div>
           <div class="baro-wait-note">尚未到达，到达后可点击展开货物清单</div>
         </div>`;
       }
@@ -251,6 +258,18 @@ export function renderBaro(baroList: BaroInfo[]) {
     const cdLabel = baro.active ? '离开倒计时' : '到达倒计时';
     const cd = document.getElementById(`baro-cd-${safeBaroId(baro.location)}`);
     if (cd) cd.textContent = `${cdLabel} ${baro.remain_str}`;
+    // Patch progress bar — Baro moves toward relay as countdown ticks
+    if (!baro.active) {
+      const CYCLE_MS = 14 * 24 * 3600 * 1000;
+      const pct = Math.max(0, Math.min(90, (1 - baro.remain_ms / CYCLE_MS) * 100));
+      const track = document.getElementById(`baro-pt-${safeBaroId(baro.location)}`);
+      if (track) track.style.setProperty('--p', pct + '%');
+      const gone = baro.remain_ms <= 0;
+      const bi = document.getElementById(`baro-bi-${safeBaroId(baro.location)}`);
+      if (bi) bi.classList.toggle('gone', gone);
+      const ri = document.getElementById(`baro-ri-${safeBaroId(baro.location)}`);
+      if (ri) ri.classList.toggle('gone', gone);
+    }
   }
 }
 
