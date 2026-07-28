@@ -127,7 +127,7 @@ export function renderBountyPanel(bounties: BountyInfo[]) {
         grid = '<div class="rw-row"><div class="rw-cell rw-empty">（暂无奖励数据）</div></div>';
       }
       return `
-        <div class="bounty-block">
+        <div class="bounty-card">
           <div class="bb-head">
             <span class="bb-num">${i + 1}</span>
             <span class="bb-title">${j.title}</span>
@@ -156,9 +156,6 @@ export function renderBountyPanel(bounties: BountyInfo[]) {
           <span class="rot-legend"><i class="rk-common">●</i>常见 <i class="rk-uncommon">●</i>罕见 <i class="rk-rare">●</i>稀有</span>
         </div>
         <div class="bounty-blocks">${blocks}</div>
-        <div class="bounty-foot">${singleRot
-          ? '该地点赏金为单一奖励池，不分轮次；稀有奖励仅在赏金后段阶段出现，最后阶段只出罕见+稀有。'
-          : '三个奖励池每次刷新轮换（A/B/C），同一时间仅一个生效；稀有奖励仅在赏金后段阶段出现，最后阶段只出罕见+稀有。'}</div>
       </div>`;
   };
 

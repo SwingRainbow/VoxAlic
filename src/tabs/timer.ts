@@ -16,7 +16,7 @@ export function renderTimer(t: MissionTimerPayload) {
     ocrEl.textContent = '--:--';
   }
 
-  // CNN v8 stats row
+  // CNN v9 stats row
   const cnnEl = document.getElementById('timer-cnn-data');
   if (cnnEl && t.ocr_engine) {
     let html = `<span class="cnn-engine">${t.ocr_engine}</span>`;

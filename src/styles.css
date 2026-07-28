@@ -53,10 +53,12 @@
   /* ── 周期卡片 ───────────────────────────────────────────── */
   --card-day-bg: #F5F0E8;
   --card-day-border: #D8C8B0;
+  --card-day-left: #c8a040;
   --card-day-name: #6a8a5a;
   --card-day-glow: rgba(107,191,89,0.08);
   --card-night-bg: #EBE8F5;
   --card-night-border: #C8C0D8;
+  --card-night-left: #7a6aaa;
   --card-night-name: #6a5a8a;
   --card-night-glow: rgba(90,127,214,0.10);
   --card-time: #d4a020;
@@ -72,6 +74,9 @@
   --bounty-rot-on-bg: #C01E25;
   --bounty-rot-on-border: #C01E25;
   --bounty-rot-on-text: #fff;
+  --bounty-card-bg: #FFF8F2;
+  --bounty-card-border: #E8D8C8;
+  --bounty-card-left: #b56a2a;
 
   /* ── 回廊面板 ───────────────────────────────────────────── */
   --circuit-head-bg: #3a6a7a;
@@ -256,16 +261,20 @@ body {
   padding: 13px 14px;
   border-radius: var(--radius);
   border: 1px solid transparent;
+  border-left: 3px solid transparent;
+  user-select: none;
   transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 .cycle-card:hover { transform: translateY(-1px); }
 .cycle-card.day {
   background: var(--card-day-bg);
   border-color: var(--card-day-border);
+  border-left-color: var(--card-day-left);
 }
 .cycle-card.night {
   background: var(--card-night-bg);
   border-color: var(--card-night-border);
+  border-left-color: var(--card-night-left);
 }
 .cycle-card.day:hover { box-shadow: 0 2px 10px var(--card-day-glow); }
 .cycle-card.night:hover { box-shadow: 0 2px 10px var(--card-night-glow); }
@@ -327,6 +336,7 @@ body {
   padding: 10px 14px;
   background: linear-gradient(135deg, #7a3d18 0%, #9c5320 55%, #b56a2a 100%);
   color: #ffe9d2;
+  user-select: none;
 }
 .bch-flame { font-size: 20px; color: #ffd9a8; }
 .bch-name { font-size: 18px; font-weight: 800; letter-spacing: 4px; }
@@ -359,6 +369,7 @@ body {
   padding: 7px 13px;
   border-bottom: 1px solid var(--border);
   background: var(--surface-2);
+  user-select: none;
 }
 .rot-tabs { display: flex; gap: 5px; }
 .rot-btn {
@@ -395,26 +406,34 @@ body {
 .rot-legend { margin-left: auto; font-size: 11px; color: var(--dim); }
 .rot-legend i { font-style: normal; margin: 0 2px 0 8px; }
 
-.bounty-block { padding: 0; }
+.bounty-card {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--bounty-card-bg);
+  border: 1px solid var(--bounty-card-border);
+  border-left: 3px solid var(--bounty-card-left);
+  user-select: none;
+}
 .bb-head {
   display: flex;
   align-items: baseline;
   gap: 9px;
-  padding: 9px 14px 7px;
-  border-bottom: 2px solid var(--border);
+  padding: 0 0 6px;
+  border-bottom: 1px solid var(--border-soft);
 }
 .bb-num {
   font-size: 16px;
   font-weight: 800;
-  color: #ff9a52;
+  color: #b54a1a;
   min-width: 14px;
 }
-.bb-title { font-size: 15px; font-weight: 700; color: #f0f0ea; }
+.bb-title { font-size: 15px; font-weight: 700; color: #5a3a1a; }
 .bb-lv {
   margin-left: auto;
   font-size: 16px;
   font-weight: 800;
-  color: #ff9a52;
+  color: #b54a1a;
   letter-spacing: 1px;
 }
 .bb-standing {
@@ -448,14 +467,6 @@ body {
 .rk-uncommon  { display: inline-block; color: #6a6a72; background: rgba(200,204,212,0.25); padding: 1px 6px; border-radius: 9px; }
 .rk-rare      { display: inline-block; color: #8a6a20; background: rgba(232,194,92,0.20); padding: 1px 6px; border-radius: 9px; }
 .rk-legendary { display: inline-block; color: #6a4a7a; background: rgba(200,155,223,0.18); padding: 1px 6px; border-radius: 9px; }
-
-.bounty-foot {
-  padding: 7px 13px 9px;
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--dim);
-  border-top: 1px solid var(--border-soft);
-}
 
 /* ── Duviri Circuit (无限回廊) panel ── */
 .circuit-head {

@@ -70,3 +70,17 @@ release_notes.txt
 
 # Temp files
 *.tmp
+
+# Training artifacts — local only
+scripts/
+*.pth
+*.csv
+baro_zh_compressed.bin
+
+# Images / data files
+*.jpg
+*.jpeg
+*.pdf
+
+# Local installers (CI builds these)
+nsis/*.exe

@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Must match DIGIT_RATIOS in train_cnn_v5.py.
 const DIGIT_RATIOS: [f32; 4] = [-0.305, -0.153, 0.115, 0.267];
 
-/// OCR result with CNN v8 engine stats.
+/// OCR result with CNN v9 engine stats.
 pub struct OcrDetail {
     pub text: String,
     pub engine: String,       // "CNN" or "NCC"
@@ -282,7 +282,7 @@ pub fn recognize_digits(
                         save_training_frame(&gray_vals, roi_w, roi_h, 0.90, &result);
                         return Some(OcrDetail {
                             text: result,
-                            engine: "CNN".into(),
+                            engine: "CNN v9".into(),
                             confidences: conf_str,
                         });
                     }

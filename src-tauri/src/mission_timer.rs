@@ -596,7 +596,7 @@ pub fn start_timer_thread(
                         if let Some(ref detail) = ocr_result {
                             let state = shared.read().unwrap();
                             let dr = state.detection_rate();
-                            let tag = if detail.engine == "CNN" { &detail.confidences } else { &detail.engine };
+                            let tag = if detail.engine.starts_with("CNN") { &detail.confidences } else { &detail.engine };
                             if dr > 0.0 {
                                 log(&log_tx, &format!("OCR: {} | {} (识别率: {:.0}%)", detail.text, tag, dr));
                             } else {
