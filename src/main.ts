@@ -117,7 +117,14 @@ window.addEventListener('DOMContentLoaded', () => {
     // Init hotkey display
     const hotkeyInput = document.getElementById('hotkey-input') as HTMLInputElement;
     const hotkeyStatus = document.getElementById('hotkey-status') as HTMLSpanElement;
+    const hotkeySaveBtn = document.getElementById('btn-hotkey-save') as HTMLButtonElement;
     hotkeyInput.value = cfg.hotkey ?? '';
+    let hotkeySaved = cfg.hotkey ?? '';
+
+    function updateHotkeyDirty() {
+      const dirty = hotkeyInput.value.trim() !== (hotkeySaved || '');
+      hotkeySaveBtn.classList.toggle('hotkey-save-dirty', dirty);
+    }
 
     // Init subscription rules
     refreshAlerts();
@@ -148,6 +155,7 @@ window.addEventListener('DOMContentLoaded', () => {
       parts.push(key);
       hotkeyInput.value = parts.join('+');
       hotkeyStatus.textContent = '';
+      updateHotkeyDirty();
     });
 
     document.getElementById('btn-hotkey-save')!.addEventListener('click', async () => {
@@ -161,6 +169,8 @@ window.addEventListener('DOMContentLoaded', () => {
           hotkeyStatus.textContent = '✅ 已设置';
         }
         if (S.currentConfig) S.currentConfig.hotkey = val;
+        hotkeySaved = val;
+        hotkeySaveBtn.classList.remove('hotkey-save-dirty');
       } catch (err: any) {
         hotkeyStatus.textContent = `⚠ ${String(err)}`;
         hotkeyInput.value = S.currentConfig?.hotkey ?? '';
@@ -173,6 +183,8 @@ window.addEventListener('DOMContentLoaded', () => {
         hotkeyInput.value = '';
         hotkeyStatus.textContent = '✅ 已清除';
         if (S.currentConfig) S.currentConfig.hotkey = null;
+        hotkeySaved = '';
+        hotkeySaveBtn.classList.remove('hotkey-save-dirty');
       } catch (err: any) {
         hotkeyStatus.textContent = `⚠ ${String(err)}`;
       }
@@ -266,16 +278,16 @@ window.addEventListener('DOMContentLoaded', () => {
       windowCount.textContent = wins.length ? `${wins.length} 个窗口` : '';
       if (wins.length && windowStatus.textContent === '检测中...') {
         windowStatus.textContent = '已检测到游戏窗口';
-        windowStatus.className = 'window-status found';
+        windowStatus.className = 'window-status window-status-inline found';
       }
       if (!wins.length) {
         windowStatus.textContent = '未检测到游戏窗口';
-        windowStatus.className = 'window-status not-found';
+        windowStatus.className = 'window-status window-status-inline not-found';
       }
     } catch (err) {
       windowCount.textContent = '';
       windowStatus.textContent = '枚举失败';
-      windowStatus.className = 'window-status not-found';
+      windowStatus.className = 'window-status window-status-inline not-found';
     }
   }
 
@@ -536,24 +548,14 @@ window.addEventListener('DOMContentLoaded', () => {
     .catch(() => { itemNamesStatus.textContent = ''; });
 
   // Log listener
-  let logLines: string[] = [];
-  const MAX_LOG = 200;
-  const logContent = document.getElementById('log-content')!;
-  listen<string>('timer-log', (event) => {
-    logLines.push(event.payload);
-    if (logLines.length > MAX_LOG) logLines = logLines.slice(-MAX_LOG);
-    logContent.innerHTML = logLines.map(line => {
-      let cls = 'log-info';
-      if (line.includes('⚠')) cls = 'log-warn';
-      else if (line.includes('同步') || line.includes('OCR')) cls = 'log-ok';
-      return `<div class="${cls}">${line}</div>`;
-    }).join('');
-    logContent.scrollTop = logContent.scrollHeight;
+  // ── Log viewer modal ──
+  const logViewerModal = document.getElementById('log-viewer-modal')!;
+  document.getElementById('btn-close-log-viewer')!.addEventListener('click', () => {
+    logViewerModal.classList.add('hidden');
   });
-
-  document.getElementById('btn-clear-log')!.addEventListener('click', () => {
-    logLines = [];
-    logContent.innerHTML = '';
+  document.getElementById('log-open-folder')!.addEventListener('click', (e) => {
+    e.preventDefault();
+    invoke('open_log_folder');
   });
 
   // ── 启动过渡 ──────────────────────────────────────────────
@@ -934,6 +936,15 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // ── ROI calibration ──
   setupCalibration();
+
+  // Calibration modal open/close
+  const calibModal = document.getElementById('calib-modal')!;
+  document.getElementById('btn-open-calib')!.addEventListener('click', () => {
+    calibModal.classList.remove('hidden');
+  });
+  document.getElementById('btn-close-calib')!.addEventListener('click', () => {
+    calibModal.classList.add('hidden');
+  });
 
   // ── Contact: open log folder ──
   (window as any)._openLogFolder = () => { invoke('open_log_folder').catch(() => {}); };

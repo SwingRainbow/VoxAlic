@@ -16,6 +16,7 @@ mod window;
 
 use std::sync::Arc;
 use std::sync::RwLock as StdRwLock;
+use std::sync::Mutex;
 use log::{warn, error};
 use std::time::Duration;
 use state::{AppState, SharedState};
@@ -224,6 +225,7 @@ type PrevCycleStates = Arc<StdRwLock<std::collections::HashMap<String, String>>>
 /// a new tray `Enter` and by every explicit hide (left-click, item click-through,
 /// empty-list), so any stale watcher exits on its next poll.
 type HideGen = Arc<std::sync::atomic::AtomicU64>;
+type TimerLog = Arc<Mutex<Vec<String>>>;
 
 /// Authoritative auto-hide for the notify popup: a thread that polls the *real*
 /// cursor position (Win32 `GetCursorPos`, thread-safe) every 120ms and hides the
@@ -826,6 +828,7 @@ fn test_recognize(
         .ok_or_else(|| "截图失败".to_string())?;
     let tmpl: &DigitTemplates = templates.inner();
     Ok(ocr::recognize_digits(&pixels, cw, ch, tmpl, mission_timer::MATCH_THRESHOLD, None)
+        .map(|d| d.text)
         .unwrap_or_else(|| "无结果".into()))
 }
 
@@ -999,15 +1002,20 @@ fn game_data_version() -> &'static str {
     GAME_DATA_VERSION
 }
 
-/// Open the log file's directory in Explorer (设置 → 联系作者).
+/// Open the log files directory in Explorer.
 #[tauri::command]
 fn open_log_folder(app: tauri::AppHandle) -> Result<(), String> {
-    let path = app.path().app_data_dir().map_err(|e| e.to_string())?.join("voxalic.log");
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let _ = std::process::Command::new("explorer")
-        .arg("/select,")
-        .arg(path.to_str().unwrap_or(""))
+        .arg(dir.to_str().unwrap_or(""))
         .spawn();
     Ok(())
+}
+
+/// Return buffered timer log lines (newest last).
+#[tauri::command]
+fn get_timer_log(log: tauri::State<'_, TimerLog>) -> Vec<String> {
+    log.lock().map(|b| b.clone()).unwrap_or_default()
 }
 
 /// Open a QQ chat window via tencent:// protocol (uses ShellExecuteW directly,
@@ -1173,6 +1181,8 @@ pub fn run() {
     let refreshing: Arc<RefreshGuard> = Arc::new(RefreshGuard(Arc::new(std::sync::atomic::AtomicBool::new(false))));
     let market_cache: market::SharedMarketCache = Arc::new(tokio::sync::RwLock::new(market::build_cache(&app_data_dir)));
     let market_auth: SharedMarketAuth = load_or_create_auth(&app_data_dir);
+    let timer_log: TimerLog = Arc::new(Mutex::new(Vec::new()));
+    let timer_log_path = app_data_dir.join("timer.log");
 
     tauri::Builder::default()
         .manage(state.clone())
@@ -1185,6 +1195,7 @@ pub fn run() {
         .manage(refreshing.clone())
         .manage(market_cache.clone())
         .manage(market_auth.clone())
+        .manage(timer_log.clone())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -1272,19 +1283,23 @@ pub fn run() {
             );
             let glow_frames = make_center_pulse_frames(&base_icon);
 
-            // Log forwarding thread
+            // Log buffer thread — appends to memory buffer + writes to file.
             let log_handle = app.handle().clone();
+            let log_buf = timer_log.clone();
+            let log_path = timer_log_path.clone();
             std::thread::spawn(move || {
+                use std::io::Write;
                 while let Ok(msg) = log_rx.recv() {
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        let _ = log_handle.emit("timer-log", msg);
-                    }));
-                    if result.is_err() {
-                        let _ = log_handle.emit(
-                            "timer-log",
-                            format!("[{}] ⚠ 日志转发异常已恢复", chrono::Local::now().format("%H:%M:%S")),
-                        );
+                    if let Ok(mut buf) = log_buf.lock() {
+                        buf.push(msg.clone());
+                        if buf.len() > 1000 { buf.remove(0); }
                     }
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .create(true).append(true).open(&log_path)
+                    {
+                        let _ = writeln!(f, "{}", msg);
+                    }
+                    let _ = log_handle.emit("timer-log", msg);
                 }
             });
 
@@ -1744,7 +1759,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, get_hotkey, set_hotkey, timer_command, list_windows, select_window, single_capture, capture_preview, test_recognize, test_alert, update_item_names, item_names_count, game_data_version, open_log_folder, open_qq_chat, get_notifications, clear_notifications, open_main_navigate, get_autostart, set_autostart, uninstall_clean, check_for_update, install_update, get_bark_url, test_phone_push, search_market_items, get_market_item, refresh_market_cache, market_cache_status, translate_items, market_signin, market_signout, market_auth_status, market_set_status, market_list_orders, market_create_order, market_update_order, market_delete_order, market_close_order])
+        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, get_hotkey, set_hotkey, timer_command, list_windows, select_window, single_capture, capture_preview, test_recognize, test_alert, update_item_names, item_names_count, game_data_version, open_log_folder, get_timer_log, open_qq_chat, get_notifications, clear_notifications, open_main_navigate, get_autostart, set_autostart, uninstall_clean, check_for_update, install_update, get_bark_url, test_phone_push, search_market_items, get_market_item, refresh_market_cache, market_cache_status, translate_items, market_signin, market_signout, market_auth_status, market_set_status, market_list_orders, market_create_order, market_update_order, market_delete_order, market_close_order])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -199,24 +199,26 @@ impl MissionTimerState {
 
     fn apply_ocr(
         &mut self,
-        ocr_result: Option<String>,
+        ocr_result: Option<crate::ocr::OcrDetail>,
         hwnd: isize,
         alert: &AlertParams,
         log_tx: &mpsc::Sender<String>,
     ) {
         // Auto-resume from checkpoint: new OCR value detected
         if self.inner_state == TimerState::Checkpoint {
-            if let Some(ref result) = ocr_result {
-                if Some(result) != self.last_valid_ocr.as_ref() {
-                    let ocr_secs = parse_time_to_secs(result);
+            if let Some(ref detail) = ocr_result {
+                if Some(&detail.text) != self.last_valid_ocr.as_ref() {
+                    let ocr_secs = parse_time_to_secs(&detail.text);
                     self.inner_state = TimerState::Running;
                     self.payload.state = "running".into();
                     self.payload.status_text = "运行中".into();
                     self.paused_elapsed = Duration::from_secs(ocr_secs as u64);
                     self.start_instant = Some(Instant::now());
-                    self.last_valid_ocr = Some(result.clone());
+                    self.last_valid_ocr = Some(detail.text.clone());
                     self.last_valid_instant = Some(Instant::now());
-                    log(log_tx, &format!("同步: {} (从截点恢复)", result));
+                    self.payload.ocr_engine = detail.engine.clone();
+                    self.payload.ocr_conf = detail.confidences.clone();
+                    log(log_tx, &format!("同步: {} (从截点恢复)", detail.text));
                 }
             }
             return;
@@ -228,8 +230,8 @@ impl MissionTimerState {
 
         self.ocr_attempts += 1;
 
-        if let Some(ref result) = ocr_result {
-            let ocr_secs = parse_time_to_secs(result);
+        if let Some(ref detail) = ocr_result {
+            let ocr_secs = parse_time_to_secs(&detail.text);
 
             let valid = if let (Some(last_ocr), Some(last_inst)) =
                 (&self.last_valid_ocr, self.last_valid_instant)
@@ -247,8 +249,10 @@ impl MissionTimerState {
             if valid {
                 self.ocr_successes += 1;
                 self.consecutive_rejects = 0;
-                log(log_tx, &format!("同步: {}", result));
-                self.payload.ocr_raw = result.clone();
+                log(log_tx, &format!("同步: {}", detail.text));
+                self.payload.ocr_raw = detail.text.clone();
+                self.payload.ocr_engine = detail.engine.clone();
+                self.payload.ocr_conf = detail.confidences.clone();
 
                 // Hard sync: overwrite internal timer with OCR time
                 self.paused_elapsed = Duration::from_secs(ocr_secs as u64);
@@ -266,14 +270,14 @@ impl MissionTimerState {
                     (false, 0)
                 };
 
-                self.last_valid_ocr = Some(result.clone());
+                self.last_valid_ocr = Some(detail.text.clone());
                 self.last_valid_instant = Some(Instant::now());
                 if checkpoint_crossed {
                     self.inner_state = TimerState::Checkpoint;
                     self.payload.state = "checkpoint".into();
                     self.payload.status_text =
                         format!("{}分钟节点 — 请切回游戏", milestone_min);
-                    log(log_tx, &format!("⚠ {}分钟节点: {}", milestone_min, result));
+                    log(log_tx, &format!("⚠ {}分钟节点: {}", milestone_min, detail.text));
                     if alert.checkpoint_enabled {
                         let body = render_alert_text(
                             alert.checkpoint_text,
@@ -285,7 +289,7 @@ impl MissionTimerState {
                     return;
                 }
             } else {
-                log(log_tx, &format!("拒绝: {} (跳变过大)", result));
+                log(log_tx, &format!("拒绝: {} (跳变过大)", detail.text));
                 self.consecutive_rejects += 1;
                 if self.consecutive_rejects >= MAX_REJECT {
                     // Accept current value as new baseline instead of resetting
@@ -293,10 +297,12 @@ impl MissionTimerState {
                     self.consecutive_rejects = 0;
                     self.paused_elapsed = Duration::from_secs(ocr_secs as u64);
                     self.start_instant = Some(Instant::now());
-                    self.last_valid_ocr = Some(result.clone());
+                    self.last_valid_ocr = Some(detail.text.clone());
                     self.last_valid_instant = Some(Instant::now());
-                    self.payload.ocr_raw = result.clone();
-                    log(log_tx, &format!("⟳ 重置基准: {}", result));
+                    self.payload.ocr_raw = detail.text.clone();
+                    self.payload.ocr_engine = detail.engine.clone();
+                    self.payload.ocr_conf = detail.confidences.clone();
+                    log(log_tx, &format!("⟳ 重置基准: {}", detail.text));
                 }
             }
         }
@@ -523,8 +529,8 @@ pub fn start_timer_thread(
 
                 if let Some((pixels, w, h)) = capture_result {
                     let ocr_result = recognize_digits(&pixels, w, h, &templates, MATCH_THRESHOLD, None);
-                    if let Some(ref result) = ocr_result {
-                        log(&log_tx, &format!("OCR: {} (识别)", result));
+                    if let Some(ref detail) = ocr_result {
+                        log(&log_tx, &format!("OCR: {} (识别)", detail.text));
                     } else {
                         log(&log_tx, "OCR: 无结果");
                     }
@@ -587,13 +593,14 @@ pub fn start_timer_thread(
                             recognize_digits(&pixels, w, h, &templates, MATCH_THRESHOLD, Some(&mut cnn));
 
                         // Log raw OCR result (even if it will be rejected)
-                        if let Some(ref result) = ocr_result {
+                        if let Some(ref detail) = ocr_result {
                             let state = shared.read().unwrap();
                             let dr = state.detection_rate();
+                            let tag = if detail.engine == "CNN" { &detail.confidences } else { &detail.engine };
                             if dr > 0.0 {
-                                log(&log_tx, &format!("OCR: {} (识别率: {:.0}%)", result, dr));
+                                log(&log_tx, &format!("OCR: {} | {} (识别率: {:.0}%)", detail.text, tag, dr));
                             } else {
-                                log(&log_tx, &format!("OCR: {} (识别)", result));
+                                log(&log_tx, &format!("OCR: {} | {} (识别)", detail.text, tag));
                             }
                         } else {
                             log(&log_tx, &format!("OCR: 无结果 (capture {}x{})", w, h));

@@ -8,6 +8,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Must match DIGIT_RATIOS in train_cnn_v5.py.
 const DIGIT_RATIOS: [f32; 4] = [-0.305, -0.153, 0.115, 0.267];
 
+/// OCR result with CNN v8 engine stats.
+pub struct OcrDetail {
+    pub text: String,
+    pub engine: String,       // "CNN" or "NCC"
+    pub confidences: String,  // "0.95 0.92 0.88" or empty for NCC fallback
+}
+
 pub struct DigitTemplate {
     pub digit: u8,
     pub pixels: Vec<f32>, // grayscale, normalized 0.0-1.0
@@ -218,7 +225,7 @@ pub fn recognize_digits(
     templates: &DigitTemplates,
     match_threshold: f32,
     mut cnn: Option<&mut Cnn>,
-) -> Option<String> {
+) -> Option<OcrDetail> {
     // BGR → grayscale
     let gray_vals: Vec<f32> = roi_pixels
         .chunks(3)
@@ -244,13 +251,15 @@ pub fn recognize_digits(
 
         if colon_ok {
             let mut digits = String::new();
+            let mut confs: Vec<f32> = Vec::new();
             for &ratio in &DIGIT_RATIOS {
                 let cx = (colon_cx as f32 + ratio * img_w as f32) as usize;
                 let cy = colon_cy;
                 let patch = extract_cnn_patch(&gray_vals, img_w, img_h, cx, cy, 1, 1);
-                let (cls, _conf) = cnn.classify(&patch);
+                let (cls, conf) = cnn.classify(&patch);
                 if cls < 10 {
                     digits.push((cls + b'0') as char);
+                    confs.push(conf);
                 }
             }
 
@@ -265,9 +274,17 @@ pub fn recognize_digits(
                         } else {
                             format!("{}:{}", minutes, seconds)
                         };
+                        let conf_str = confs.iter()
+                            .map(|c| format!("{:.2}", c))
+                            .collect::<Vec<_>>()
+                            .join(" ");
                         eprintln!("[OCR] colon: {}", result);
                         save_training_frame(&gray_vals, roi_w, roi_h, 0.90, &result);
-                        return Some(result);
+                        return Some(OcrDetail {
+                            text: result,
+                            engine: "CNN".into(),
+                            confidences: conf_str,
+                        });
                     }
                 }
             }
@@ -382,7 +399,11 @@ pub fn recognize_digits(
             return None;
         }
     }
-    Some(format!("{}:{}", minutes, seconds))
+    Some(OcrDetail {
+        text: format!("{}:{}", minutes, seconds),
+        engine: "NCC".into(),
+        confidences: String::new(),
+    })
 }
 
 fn match_template(

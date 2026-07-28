@@ -24,6 +24,30 @@ export const SYNDICATE_DISPLAY: Record<string, string> = {
 // Per-trader structural signatures to avoid DOM rebuild on every tick.
 export const baroSigs = new Map<string, string>();
 
+// ── Baro progress animation across app restarts ──────────────────────────
+const BARO_ANIM_KEY = 'baro_pos_v1';
+const SLIDE_COOLDOWN_MS = 60_000;
+let _baroLastSlideMs = 0;
+
+function saveBaroPos(loc: string, pct: number) {
+  try {
+    const raw = localStorage.getItem(BARO_ANIM_KEY);
+    const data = raw ? JSON.parse(raw) : {};
+    data[loc] = { p: Math.round(pct * 100) / 100, ts: Date.now() };
+    localStorage.setItem(BARO_ANIM_KEY, JSON.stringify(data));
+  } catch { /* quota exceeded — ignore */ }
+}
+
+function loadBaroPos(loc: string): number {
+  try {
+    const raw = localStorage.getItem(BARO_ANIM_KEY);
+    if (!raw) return -1;
+    const entry = JSON.parse(raw)[loc];
+    if (entry && typeof entry.p === 'number') return entry.p;
+  } catch { /* corrupt data — ignore */ }
+  return -1;
+}
+
 export let arbSig = '';
 
 export function fmtHourRange(startMs: number, endMs: number): string {
@@ -263,7 +287,62 @@ export function renderBaro(baroList: BaroInfo[]) {
       const CYCLE_MS = 14 * 24 * 3600 * 1000;
       const pct = Math.max(0, Math.min(90, (1 - baro.remain_ms / CYCLE_MS) * 100));
       const track = document.getElementById(`baro-pt-${safeBaroId(baro.location)}`);
-      if (track) track.style.setProperty('--p', pct + '%');
+      if (track) {
+        const tr = track as any;
+        if (!tr._sliding) {
+          track.style.setProperty('--p', pct + '%');
+        }
+        saveBaroPos(baro.location, pct);
+
+        // Slides in from the left every cooldown window.
+        if (!tr._sliding && Date.now() - _baroLastSlideMs > SLIDE_COOLDOWN_MS) {
+          const coll = track.children;
+          if (!coll.length) return;
+          _baroLastSlideMs = Date.now();
+
+          const doSlide = () => {
+            if (document.hidden) return;
+            const saved = loadBaroPos(baro.location);
+            const fromPct = saved >= 0 ? saved : 0;
+            tr._sliding = true;
+            for (let i = 0; i < coll.length; i++) (coll[i] as HTMLElement).style.transition = 'none';
+            track.style.setProperty('--p', fromPct + '%');
+
+            const startMs = performance.now();
+            const span = pct - fromPct;
+            const DUR = 3000;
+            const anim = (now: number) => {
+              const t = Math.min((now - startMs) / DUR, 1);
+              const e = 1 - Math.pow(1 - t, 3);
+              track.style.setProperty('--p', (fromPct + span * e) + '%');
+              if (t < 1) {
+                requestAnimationFrame(anim);
+              } else {
+                for (let i = 0; i < coll.length; i++) (coll[i] as HTMLElement).style.transition = '';
+                tr._sliding = false;
+              }
+            };
+            requestAnimationFrame(anim);
+          };
+
+          // Wait for splash overlay to finish, then pause 800ms.
+          const splash = document.getElementById('splash-overlay');
+          if (splash) {
+            const poll = () => {
+              const el = document.getElementById('splash-overlay');
+              if (!el || parseFloat(getComputedStyle(el).opacity) < 0.05) {
+                setTimeout(doSlide, 800);
+              } else {
+                setTimeout(poll, 150);
+              }
+            };
+            poll();
+          } else {
+            setTimeout(doSlide, 800);
+          }
+        }
+      }
+
       const gone = baro.remain_ms <= 0;
       const bi = document.getElementById(`baro-bi-${safeBaroId(baro.location)}`);
       if (bi) bi.classList.toggle('gone', gone);

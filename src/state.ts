@@ -80,6 +80,8 @@ export interface MissionTimerPayload {
   status_text: string;
   detection_rate: number;
   ocr_raw?: string;
+  ocr_engine?: string;
+  ocr_conf?: string;
   window_status?: string;
 }
 

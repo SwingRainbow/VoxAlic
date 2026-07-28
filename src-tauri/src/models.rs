@@ -62,6 +62,10 @@ pub struct MissionTimerPayload {
     #[serde(default)]
     pub ocr_raw: String,
     #[serde(default)]
+    pub ocr_engine: String,
+    #[serde(default)]
+    pub ocr_conf: String,
+    #[serde(default)]
     pub window_status: String,
 }
 
@@ -77,6 +81,8 @@ impl Default for MissionTimerPayload {
             status_text: "未启动".into(),
             detection_rate: 0.0,
             ocr_raw: "--:--".into(),
+            ocr_engine: String::new(),
+            ocr_conf: String::new(),
             window_status: "未检测到游戏窗口".into(),
         }
     }

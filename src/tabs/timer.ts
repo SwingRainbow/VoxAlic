@@ -16,6 +16,18 @@ export function renderTimer(t: MissionTimerPayload) {
     ocrEl.textContent = '--:--';
   }
 
+  // CNN v8 stats row
+  const cnnEl = document.getElementById('timer-cnn-data');
+  if (cnnEl && t.ocr_engine) {
+    let html = `<span class="cnn-engine">${t.ocr_engine}</span>`;
+    if (t.ocr_conf) {
+      html += ` <span class="cnn-conf">${t.ocr_conf}</span>`;
+    }
+    cnnEl.innerHTML = html;
+  } else if (cnnEl && t.state === 'idle') {
+    cnnEl.innerHTML = '';
+  }
+
   // Status
   const statusEl = document.getElementById('timer-status')!;
   statusEl.textContent = t.status_text;
@@ -34,7 +46,7 @@ export function renderTimer(t: MissionTimerPayload) {
   const wsEl = document.getElementById('window-status');
   if (wsEl && t.window_status) {
     wsEl.textContent = t.window_status;
-    wsEl.className = 'window-status ' + (t.window_status.includes('检测到') ? 'found' : 'not-found');
+    wsEl.className = 'window-status window-status-inline ' + (t.window_status.includes('检测到') ? 'found' : 'not-found');
   }
 
   // Life support indicator
