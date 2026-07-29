@@ -1102,7 +1102,24 @@ details.settings-section[open] summary.settings-section-title::after {
    用纵向 flex + margin-top:auto 把它钉在窗口底部（贴下边框上方）；卡片填满/
    溢出时它会自然跟在卡片后面。其余子元素禁止收缩，保持原高度。 */
 #tab-cycles.active { display: flex; flex-direction: column; }
-#tab-cycles > *:not(.cycles-updated) { flex: 0 0 auto; }
+#tab-cycles > *:not(.cycles-updated):not(.worldstate-error-banner) { flex: 0 0 auto; }
+.worldstate-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: var(--radius);
+  background: #3a2020;
+  border: 1px solid #6a3030;
+  border-left: 3px solid #c44;
+  font-size: 13px;
+  color: #e8c8c8;
+  user-select: none;
+}
+.worldstate-error-banner.hidden { display: none; }
+.worldstate-error-icon { font-size: 16px; }
+.worldstate-error-msg { flex: 1; }
+.worldstate-error-time { font-size: 11px; color: #a08080; }
 .cycles-updated {
   margin-top: auto;
   text-align: center;

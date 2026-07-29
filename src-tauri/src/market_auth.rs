@@ -5,7 +5,7 @@
 //! a JS Challenge to non-browser HTTP clients, we use a hidden WebView
 //! (real browser TLS fingerprint) to fetch the page and extract the token.
 //!
-//! Tokens + device_id are persisted to `{app_data_dir}/market_auth.json`.
+//! Tokens + device_id are persisted to `{app_data_dir}/market_auth.bin` (DPAPI-encrypted).
 //! CSRF tokens / session cookies are ephemeral — fetched on-demand, never stored.
 
 use std::sync::Arc;
@@ -23,7 +23,8 @@ use log::{debug, warn, error};
 
 const MARKET_WEB: &str = "https://warframe.market";
 const MARKET_API_V1: &str = "https://api.warframe.market/v1";
-const AUTH_FILE: &str = "market_auth.json";
+const AUTH_FILE: &str = "market_auth.bin";
+const AUTH_FILE_LEGACY: &str = "market_auth.json"; // pre-DPAPI migration target
 const WS_URL: &str = "wss://ws.warframe.market/socket";
 
 // ── WebSocket command channel ───────────────────────────────────────────────
@@ -131,33 +132,77 @@ fn persist(ai: &MarketAuthInner, app_data_dir: &std::path::Path) {
         avatar: ai.avatar.clone(),
         reputation: ai.reputation,
     };
-    let path = auth_path(app_data_dir);
-    if let Ok(json) = serde_json::to_string(&af) {
-        let tmp = path.with_extension("json.tmp");
-        if std::fs::write(&tmp, &json).is_err() || std::fs::rename(&tmp, &path).is_err() {
-            error!("[wm] market_auth.json write failed");
+    match serde_json::to_string(&af) {
+        Ok(json) => {
+            match dpapi_encrypt(json.as_bytes()) {
+                Ok(encrypted) => {
+                    let path = auth_path(app_data_dir);
+                    if let Err(e) = crate::storage::atomic_write(&path, &encrypted) {
+                        error!("[wm] market_auth write failed: {e}");
+                    }
+                }
+                Err(e) => error!("[wm] DPAPI encrypt failed: {e}"),
+            }
         }
+        Err(e) => error!("[wm] market_auth serialize failed: {e}"),
     }
 }
 
 pub(crate) fn clear_persisted(app_data_dir: &std::path::Path) {
     let _ = std::fs::remove_file(auth_path(app_data_dir));
+    let _ = std::fs::remove_file(app_data_dir.join(AUTH_FILE_LEGACY));
 }
 
 // ── Construction ──────────────────────────────────────────────────────────
 
 pub fn load_or_create_auth(app_data_dir: &std::path::Path) -> SharedMarketAuth {
     let path = auth_path(app_data_dir);
+    let legacy_path = app_data_dir.join(AUTH_FILE_LEGACY);
+
     let (access_token, refresh_token, device_id, ingame_name, avatar, reputation) =
-        if let Ok(s) = std::fs::read_to_string(&path) {
-            match serde_json::from_str::<AuthFile>(&s) {
-                Ok(a) => (a.access_token, a.refresh_token, a.device_id, a.ingame_name, a.avatar, a.reputation),
-                Err(_) => {
-                    error!("[wm] market_auth.json parse failed, resetting");
-                    (None, None, String::new(), None, None, None)
+        // 1. Try encrypted file.
+        if let Ok(raw) = std::fs::read(&path) {
+            match dpapi_decrypt(&raw) {
+                Ok(json) => match serde_json::from_str::<AuthFile>(&json) {
+                    Ok(a) => (a.access_token, a.refresh_token, a.device_id, a.ingame_name, a.avatar, a.reputation),
+                    Err(_) => {
+                        error!("[wm] market_auth.bin parse failed, resetting");
+                        (None, None, String::new(), None, None, None)
+                    }
                 },
+                Err(e) => {
+                    error!("[wm] DPAPI decrypt failed: {e}, resetting");
+                    (None, None, String::new(), None, None, None)
+                }
             }
-        } else {
+        }
+        // 2. Migrate from legacy plaintext JSON.
+        else if legacy_path.exists() {
+            warn!("[wm] migrating from legacy market_auth.json");
+            match std::fs::read_to_string(&legacy_path) {
+                Ok(s) => match serde_json::from_str::<AuthFile>(&s) {
+                    Ok(a) => {
+                        let tokens = (a.access_token.clone(), a.refresh_token.clone(), a.device_id.clone(), a.ingame_name.clone(), a.avatar.clone(), a.reputation);
+                        // Immediately encrypt and write to new location, then remove legacy.
+                        if let Ok(json) = serde_json::to_string(&a) {
+                            if let Ok(encrypted) = dpapi_encrypt(json.as_bytes()) {
+                                if crate::storage::atomic_write(&path, &encrypted).is_ok() {
+                                    let _ = std::fs::remove_file(&legacy_path);
+                                    warn!("[wm] legacy market_auth.json migrated to DPAPI-encrypted bin");
+                                }
+                            }
+                        }
+                        tokens
+                    }
+                    Err(_) => {
+                        error!("[wm] legacy market_auth.json parse failed, resetting");
+                        (None, None, String::new(), None, None, None)
+                    }
+                },
+                Err(_) => (None, None, String::new(), None, None, None),
+            }
+        }
+        else {
             (None, None, String::new(), None, None, None)
         };
 
@@ -863,7 +908,97 @@ async fn handle_ws_message(text: &str, auth: &SharedMarketAuth, app_handle: &tau
     }
 }
 
-// ── Tauri commands ────────────────────────────────────────────────────────
+// ── DPAPI helpers ──────────────────────────────────────────────────────────
+
+const DPAPI_MAGIC: &[u8; 4] = b"VXA1";
+
+/// Encrypt `plaintext` with the current user's DPAPI key.
+/// Returns `MAGIC || ciphertext` so the on-disk format is self-describing.
+fn dpapi_encrypt(plaintext: &[u8]) -> Result<Vec<u8>, String> {
+    use windows::Win32::Security::Cryptography::{
+        CryptProtectData, CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN,
+    };
+
+    let input = CRYPT_INTEGER_BLOB {
+        cbData: plaintext.len() as u32,
+        pbData: plaintext.as_ptr() as *mut u8,
+    };
+
+    let mut out = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
+
+    unsafe {
+        CryptProtectData(
+            &input,
+            windows::core::w!(""),
+            None,
+            None,
+            None,
+            CRYPTPROTECT_UI_FORBIDDEN,
+            &mut out,
+        )
+    }.map_err(|e| format!("CryptProtectData: {e}"))?;
+
+    let ciphertext = unsafe {
+        std::slice::from_raw_parts(out.pbData, out.cbData as usize)
+    };
+    let mut result = Vec::with_capacity(4 + ciphertext.len());
+    result.extend_from_slice(DPAPI_MAGIC);
+    result.extend_from_slice(ciphertext);
+
+    // Free the DPAPI-allocated blob.
+    unsafe {
+        windows::Win32::Foundation::LocalFree(
+            windows::Win32::Foundation::HLOCAL(out.pbData as *mut std::ffi::c_void)
+        );
+    }
+
+    Ok(result)
+}
+
+/// Decrypt `data` (format: `VXA1 || ciphertext`).
+fn dpapi_decrypt(data: &[u8]) -> Result<String, String> {
+    use windows::Win32::Security::Cryptography::{
+        CryptUnprotectData, CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN,
+    };
+
+    if data.len() < 4 || &data[..4] != DPAPI_MAGIC {
+        return Err("bad magic".into());
+    }
+
+    let ciphertext = &data[4..];
+    let input = CRYPT_INTEGER_BLOB {
+        cbData: ciphertext.len() as u32,
+        pbData: ciphertext.as_ptr() as *mut u8,
+    };
+
+    let mut out = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
+
+    unsafe {
+        CryptUnprotectData(
+            &input,
+            None,
+            None,
+            None,
+            None,
+            CRYPTPROTECT_UI_FORBIDDEN,
+            &mut out,
+        )
+    }.map_err(|e| format!("CryptUnprotectData: {e}"))?;
+
+    let plaintext = unsafe {
+        std::slice::from_raw_parts(out.pbData, out.cbData as usize)
+    };
+    let result = String::from_utf8(plaintext.to_vec())
+        .map_err(|e| format!("DPAPI decrypt produced non-UTF8: {e}"))?;
+
+    unsafe {
+        windows::Win32::Foundation::LocalFree(
+            windows::Win32::Foundation::HLOCAL(out.pbData as *mut std::ffi::c_void)
+        );
+    }
+
+    Ok(result)
+}
 
 #[tauri::command]
 pub async fn market_signin(

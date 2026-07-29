@@ -1,6 +1,6 @@
 [package]
 name = "voxalic"
-version = "1.3.2"
+version = "1.3.3"
 description = "VoxAlic — Warframe worldstate monitor"
 authors = ["you"]
 edition = "2021"
@@ -13,6 +13,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # 生产构建必须启用此 feature（决定 dev=cfg!(not(feature="custom-protocol"))）。
 # 缺失会导致 release exe 仍加载 devUrl(localhost:1420) → "localhost 拒绝连接"。请勿删除！
 custom-protocol = ["tauri/custom-protocol"]
+# 本地开发版启用，保存 OCR 训练帧用于 CNN 模型训练。
+# 发布构建和 CI 不启用。启用方式：cargo build --features ocr-training
+# 未启用时不创建训练图片目录、不写图片、不提供训练图片清理按钮。
+ocr-training = []
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -32,6 +36,8 @@ windows = { version = "0.58", features = [
     "Win32_Graphics_Gdi",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics_Dwm",
+    "Win32_Security_Cryptography",
+    "Win32_Storage_FileSystem",
     "Win32_System_Registry",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_UI_Shell",

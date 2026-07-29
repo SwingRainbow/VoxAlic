@@ -27,6 +27,9 @@ pub struct AppState {
     /// auto-refresh task. Reset when Baro leaves, so the next arrival triggers
     /// again. Prevents spawning duplicate refresh tasks on every tick.
     pub baro_arrival_handled: bool,
+    /// Worldstate fetch error state. Cleared on successful fetch.
+    pub worldstate_error: Option<String>,
+    pub worldstate_error_time: Option<String>,
 }
 
 impl AppState {
@@ -45,6 +48,8 @@ impl AppState {
             last_fetch_wall_ms: 0,
             cached_payload: AppStatePayload::default(),
             baro_arrival_handled: false,
+            worldstate_error: None,
+            worldstate_error_time: None,
         }
     }
 }

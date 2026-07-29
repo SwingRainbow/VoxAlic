@@ -175,6 +175,8 @@ export interface AppStatePayload {
   bounties: BountyInfo[];
   circuit: CircuitInfo | null;
   arbitration: ArbitrationInfo | null;
+  worldstate_error?: string | null;
+  worldstate_error_time?: string | null;
 }
 
 // ── Warframe.Market types ──

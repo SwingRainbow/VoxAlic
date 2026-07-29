@@ -190,6 +190,13 @@ pub struct AppStatePayload {
     pub circuit: Option<CircuitInfo>,
     #[serde(default)]
     pub arbitration: Option<ArbitrationInfo>,
+    /// When both primary and fallback worldstate APIs fail, this carries the
+    /// error description. Null/absent = data is valid (or never fetched yet).
+    #[serde(default)]
+    pub worldstate_error: Option<String>,
+    /// Timestamp of the last failed fetch attempt (local time).
+    #[serde(default)]
+    pub worldstate_error_time: Option<String>,
 }
 
 // ── Warframe.Market ─────────────────────────────────────────────────────────

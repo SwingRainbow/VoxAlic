@@ -1,8 +1,16 @@
 use crate::cnn::Cnn;
+#[cfg(feature = "ocr-training")]
 use image::ImageEncoder;
+#[cfg(feature = "ocr-training")]
 use std::path::PathBuf;
+#[cfg(feature = "ocr-training")]
 use std::sync::atomic::{AtomicI64, Ordering};
+#[cfg(feature = "ocr-training")]
+use std::sync::atomic::{AtomicBool, AtomicU32};
+#[cfg(feature = "ocr-training")]
 use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(feature = "ocr-training")]
+use std::sync::OnceLock;
 
 /// Digit X-offsets from colon centre, as fraction of ROI width.
 /// Must match DIGIT_RATIOS in train_cnn_v5.py.
@@ -279,6 +287,7 @@ pub fn recognize_digits(
                             .collect::<Vec<_>>()
                             .join(" ");
                         eprintln!("[OCR] colon: {}", result);
+                        #[cfg(feature = "ocr-training")]
                         save_training_frame(&gray_vals, roi_w, roi_h, 0.90, &result);
                         return Some(OcrDetail {
                             text: result,
@@ -317,13 +326,14 @@ pub fn recognize_digits(
         }
     }
 
-    let best_score = all_detections
+    let _best_score = all_detections
         .iter()
         .map(|d| d.0)
         .fold(0.0f32, f32::max);
 
     if all_detections.is_empty() {
         eprintln!("[OCR] 0 NCC candidates (thresh={match_threshold})");
+        #[cfg(feature = "ocr-training")]
         save_training_frame(&gray_vals, roi_w, roi_h, 0.0, "NoResult");
         return None;
     }
@@ -380,10 +390,13 @@ pub fn recognize_digits(
         .collect();
 
     // Save frames for training: high-score → training_frames/, low-score → low_score_frames/
-    if best_score >= 0.80 {
-        save_training_frame(&gray_vals, roi_w, roi_h, best_score, &digits);
-    } else if best_score < 0.75 {
-        save_training_frame(&gray_vals, roi_w, roi_h, best_score, &digits);
+    #[cfg(feature = "ocr-training")]
+    {
+        if _best_score >= 0.80 {
+            save_training_frame(&gray_vals, roi_w, roi_h, _best_score, &digits);
+        } else if _best_score < 0.75 {
+            save_training_frame(&gray_vals, roi_w, roi_h, _best_score, &digits);
+        }
     }
 
     // Parse expected format: "M:SS" or "MM:SS"
@@ -498,6 +511,9 @@ fn nms(
 /// Save a grayscale ROI frame to %APPDATA%/com.voxalic.app/.
 /// High-score frames (result="high") go to `training_frames/`, low-score
 /// frames go to `low_score_frames/`.  Throttled to ≤1 save per 2 seconds.
+///
+/// Controlled by static configuration set via `set_training_frame_config()`.
+#[cfg(feature = "ocr-training")]
 fn save_training_frame(
     gray_vals: &[f32],
     w: u32,
@@ -506,6 +522,12 @@ fn save_training_frame(
     result: &str,
 ) {
     static LAST_SAVE: AtomicI64 = AtomicI64::new(0);
+
+    // Check toggle.
+    if !SAVE_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
+
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -516,14 +538,33 @@ fn save_training_frame(
     }
     LAST_SAVE.store(now, Ordering::Relaxed);
 
-    let appdata = match std::env::var("APPDATA") {
-        Ok(v) => v,
-        Err(_) => return,
+    let base_dir = match TRAINING_DIR.get() {
+        Some(d) => d.clone(),
+        None => return,
     };
     let subdir = if best_score >= 0.80 { "training_frames" } else { "low_score_frames" };
-    let dir = PathBuf::from(appdata).join("com.voxalic.app").join(subdir);
+    let dir = base_dir.join(subdir);
     if let Err(_) = std::fs::create_dir_all(&dir) {
         return;
+    }
+
+    // Enforce max count: if exceeded, delete oldest files first.
+    let max = TRAINING_FRAMES_MAX.load(Ordering::Relaxed) as usize;
+    if max > 0 {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            let mut files: Vec<_> = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().map_or(false, |x| x == "png"))
+                .collect();
+            if files.len() >= max {
+                // Sort by modified time, oldest first.
+                files.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
+                let to_remove = files.len().saturating_sub(max.saturating_sub(1));
+                for entry in files.iter().take(to_remove) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
     }
 
     let pixels: Vec<u8> = gray_vals.iter().map(|&g| g.clamp(0.0, 255.0) as u8).collect();
@@ -548,6 +589,82 @@ fn save_training_frame(
         return;
     }
     let _ = std::fs::write(&path, &buf);
+}
+
+// ── Training frame config (set from Tauri command, read by OCR thread) ─────
+
+#[cfg(feature = "ocr-training")]
+static TRAINING_DIR: OnceLock<PathBuf> = OnceLock::new();
+#[cfg(feature = "ocr-training")]
+static SAVE_ENABLED: AtomicBool = AtomicBool::new(true);
+#[cfg(feature = "ocr-training")]
+static TRAINING_FRAMES_MAX: AtomicU32 = AtomicU32::new(5000);
+
+/// Called once at startup with Tauri's app_data_dir, so training frame paths
+/// follow the app's data directory instead of a hardcoded path.
+#[cfg(feature = "ocr-training")]
+pub fn init_training_dir(app_data_dir: &std::path::Path) {
+    let _ = TRAINING_DIR.set(app_data_dir.to_path_buf());
+}
+
+/// Called when config is loaded or changed to sync training-frame settings to
+/// the statics the OCR thread reads.
+#[cfg(feature = "ocr-training")]
+pub fn set_training_frame_config(enabled: bool, max_frames: u32) {
+    SAVE_ENABLED.store(enabled, Ordering::Relaxed);
+    TRAINING_FRAMES_MAX.store(max_frames, Ordering::Relaxed);
+}
+
+/// Delete all training frames and low-score frames from the app data directory.
+#[cfg(feature = "ocr-training")]
+pub fn cleanup_training_frames(app_data_dir: &std::path::Path) -> (u32, u32) {
+    let mut training_count = 0u32;
+    let mut low_count = 0u32;
+
+    for subdir in &["training_frames", "low_score_frames"] {
+        let dir = app_data_dir.join(subdir);
+        if dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    if entry.path().extension().map_or(false, |x| x == "png") {
+                        if std::fs::remove_file(entry.path()).is_ok() {
+                            if *subdir == "training_frames" {
+                                training_count += 1;
+                            } else {
+                                low_count += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    (training_count, low_count)
+}
+
+/// Count training frames (for the settings UI).
+#[cfg(feature = "ocr-training")]
+pub fn count_training_frames(app_data_dir: &std::path::Path) -> (u32, u32) {
+    let mut training_count = 0u32;
+    let mut low_count = 0u32;
+
+    for subdir in &["training_frames", "low_score_frames"] {
+        let dir = app_data_dir.join(subdir);
+        if dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                let count = entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().extension().map_or(false, |x| x == "png"))
+                    .count() as u32;
+                if *subdir == "training_frames" {
+                    training_count = count;
+                } else {
+                    low_count = count;
+                }
+            }
+        }
+    }
+    (training_count, low_count)
 }
 
 /// Extract a 40×40 crop around the NCC detection centre, then resize to

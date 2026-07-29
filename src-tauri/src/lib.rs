@@ -12,6 +12,7 @@ mod models;
 mod ocr;
 mod phone_push;
 mod state;
+mod storage;
 mod window;
 
 use std::sync::Arc;
@@ -456,8 +457,13 @@ fn build_payload(state: &AppState, timer_state: &MissionTimerState) -> AppStateP
     }
 
     // Arbitration is epoch-computed each tick. Suppress until the first
-    // worldstate fetch completes so it doesn't render ahead of other panels.
-    let arbitration = if state.initialized { parse_arbitration(now) } else { None };
+    // worldstate fetch completes, and during worldstate errors (so the UI
+    // stays in the "all unavailable" state instead of mixing local + stale).
+    let arbitration = if state.initialized && state.worldstate_error.is_none() {
+        parse_arbitration(now)
+    } else {
+        None
+    };
 
     AppStatePayload {
         normal_fissures: normal,
@@ -471,6 +477,8 @@ fn build_payload(state: &AppState, timer_state: &MissionTimerState) -> AppStateP
         bounties,
         circuit,
         arbitration,
+        worldstate_error: state.worldstate_error.clone(),
+        worldstate_error_time: state.worldstate_error_time.clone(),
     }
 }
 
@@ -485,6 +493,7 @@ fn refresh_cached_payload(
     countdown_secs: u32,
     last_update: &str,
     initialized: bool,
+    worldstate_error: Option<String>,
 ) {
     for f in p.normal_fissures.iter_mut()
         .chain(p.hard_fissures.iter_mut())
@@ -529,7 +538,11 @@ fn refresh_cached_payload(
         c.remain_ms = c.expiry_ms - now;
         c.remain_str = fmt_remain_days(c.remain_ms);
     }
-    p.arbitration = if initialized { parse_arbitration(now) } else { None };
+    p.arbitration = if initialized && worldstate_error.is_none() {
+        parse_arbitration(now)
+    } else {
+        None
+    };
     p.mission_timer = timer_payload.clone();
     p.countdown_secs = countdown_secs;
     p.last_update = last_update.to_string();
@@ -643,17 +656,15 @@ async fn fetch_store_emit(
                 s.circuit = circuit;
                 s.last_update = now_str;
                 s.countdown_secs = REFRESH_SEC;
-                s.last_fetch_wall_ms = now_ms(); // wall-clock anchor for tick-loop countdown derivation
-                s.initialized = true; // data is ready — allow local computation (arbitration) to join
-                // Reset Baro arrival flag when none are active, so the next
-                // arrival triggers the auto-refresh task again.
+                s.last_fetch_wall_ms = now_ms();
+                s.initialized = true;
+                // Clear any previous error on successful fetch.
+                s.worldstate_error = None;
+                s.worldstate_error_time = None;
                 let any_active = s.baro.iter().any(|b| b.active);
                 if !any_active {
                     s.baro_arrival_handled = false;
                 }
-                // Build a fresh payload while we hold the write lock, cache it in
-                // state so the per-second tick can refresh it in-place without
-                // cloning every fissure/cycle/bounty vec all over again.
                 let t = timer.read().unwrap();
                 s.cached_payload = build_payload(&s, &t);
                 let _ = handle.emit("worldstate-update", &s.cached_payload);
@@ -661,9 +672,25 @@ async fn fetch_store_emit(
             Ok(())
         }
         Err(e) => {
-            // Network failed, but allow locally-computed data to show anyway.
+            // Both primary and fallback failed — clear stale API data and
+            // enter "data unavailable" state. Locally-computed data (Vallis,
+            // Duviri, Arbitration) still renders via build_payload.
+            let error_time = chrono::Local::now().format("%H:%M:%S").to_string();
+            warn!("worldstate fetch failed at {error_time}: {e}");
             let mut s = state.write().await;
+            s.normal_fissures.clear();
+            s.hard_fissures.clear();
+            s.storm_fissures.clear();
+            s.cycles.clear();
+            s.baro.clear();
+            s.bounties.clear();
+            s.circuit = None;
             s.initialized = true;
+            s.worldstate_error = Some(format!("暂时无法获取，请稍后重试"));
+            s.worldstate_error_time = Some(error_time);
+            let t = timer.read().unwrap();
+            s.cached_payload = build_payload(&s, &t);
+            let _ = handle.emit("worldstate-update", &s.cached_payload);
             Err(e)
         }
     }
@@ -694,6 +721,11 @@ fn get_config(cfg: tauri::State<'_, SharedConfig>) -> AppConfig {
 fn set_config(cfg: tauri::State<'_, SharedConfig>, config: AppConfig, app: tauri::AppHandle) -> Result<(), String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     save_config(&app_data_dir, &config)?;
+    #[cfg(feature = "ocr-training")]
+    crate::ocr::set_training_frame_config(
+        config.mission_timer.save_training_frames,
+        config.mission_timer.training_frames_max,
+    );
     *cfg.write().unwrap() = config;
     Ok(())
 }
@@ -878,27 +910,12 @@ fn set_autostart(enabled: bool) -> Result<(), String> {
 
 /// Remove user data, autostart entry, then launch the system uninstaller and exit.
 /// The system uninstaller (registered by NSIS/MSI) removes the exe and shortcuts.
+/// IMPORTANT: we validate the uninstaller exists BEFORE deleting user data, so a
+/// missing/broken uninstall registry entry won't leave the user with lost config
+/// and a still-installed app.
 #[tauri::command]
 async fn uninstall_clean(app: tauri::AppHandle) -> Result<(), String> {
-    // 1. Delete app data directory (config.json, baro_zh.json, etc.)
-    if let Ok(data_dir) = app.path().app_data_dir() {
-        let _ = std::fs::remove_dir_all(&data_dir);
-    }
-
-    // 2. Remove autostart registry entry
-    unsafe {
-        use windows::Win32::System::Registry::*;
-        let mut hkey = HKEY::default();
-        if RegOpenKeyExW(HKEY_CURRENT_USER, AUTOSTART_SUBKEY, 0, KEY_SET_VALUE, &mut hkey)
-            .ok().is_ok()
-        {
-            let _ = RegDeleteValueW(hkey, AUTOSTART_VALUE).ok();
-            let _ = RegCloseKey(hkey);
-        }
-    }
-
-    // 3. Look up UninstallString from the system registry and launch it.
-    //    NSIS registers under HKCU\...\Uninstall\{productName}.
+    // 1. Look up UninstallString from the registry FIRST (read-only, no side effects).
     let uninstall_cmd = unsafe {
         use windows::Win32::System::Registry::*;
         let subkey = windows::core::w!(
@@ -921,19 +938,62 @@ async fn uninstall_clean(app: tauri::AppHandle) -> Result<(), String> {
         result
     };
 
-    if let Some(cmd) = uninstall_cmd {
-        // UninstallString from NSIS is a quoted path like `"C:\path\uninstall.exe"`.
-        // Strip the surrounding quotes — Command::new calls CreateProcess directly
-        // so spaces in the path are fine without quoting.
-        let exe = cmd.trim().trim_matches('"');
-        std::process::Command::new(exe)
-            .spawn()
-            .map_err(|e| format!("无法启动卸载程序 [{exe}]: {e}"))?;
-    } else {
-        return Err("未找到卸载程序，请通过「设置 → 应用」手动卸载".into());
+    let (exe, args) = match uninstall_cmd {
+        Some(cmd) => {
+            let cmd = cmd.trim();
+            // Parse quoted exe path + optional trailing args.
+            // NSIS: "C:\path\uninstall.exe" or "C:\path\uninstall.exe" /S
+            let (exe_path, exe_args) = if cmd.starts_with('"') {
+                if let Some(end) = cmd[1..].find('"') {
+                    let p = &cmd[1..end + 1];
+                    let rest = cmd[end + 2..].trim();
+                    (p.to_string(), if rest.is_empty() { Vec::new() } else { rest.split_whitespace().map(String::from).collect() })
+                } else {
+                    // Malformed — missing closing quote, fall back to whole string.
+                    (cmd.to_string(), Vec::new())
+                }
+            } else {
+                // No quotes — first token is exe, rest are args.
+                let mut parts = cmd.split_whitespace();
+                let p = parts.next().unwrap_or(cmd).to_string();
+                let a: Vec<String> = parts.map(String::from).collect();
+                (p, a)
+            };
+            if !std::path::Path::new(&exe_path).exists() {
+                return Err(format!("卸载程序不存在: {exe_path}"));
+            }
+            (exe_path, exe_args)
+        }
+        None => return Err("未找到卸载程序，请通过「设置 → 应用」手动卸载".into()),
+    };
+
+    // 2. Launch the uninstaller FIRST — if spawn fails, user data stays intact.
+    let mut child = std::process::Command::new(&exe);
+    if !args.is_empty() {
+        child.args(&args);
+    }
+    child
+        .spawn()
+        .map_err(|e| format!("无法启动卸载程序 [{exe}]: {e}"))?;
+
+    // 3. Uninstaller successfully spawned — now safe to clean up user data.
+    if let Ok(data_dir) = app.path().app_data_dir() {
+        let _ = std::fs::remove_dir_all(&data_dir);
     }
 
-    // 4. Exit this app so the uninstaller can remove the exe
+    // 4. Remove autostart registry entry.
+    unsafe {
+        use windows::Win32::System::Registry::*;
+        let mut hkey = HKEY::default();
+        if RegOpenKeyExW(HKEY_CURRENT_USER, AUTOSTART_SUBKEY, 0, KEY_SET_VALUE, &mut hkey)
+            .ok().is_ok()
+        {
+            let _ = RegDeleteValueW(hkey, AUTOSTART_VALUE).ok();
+            let _ = RegCloseKey(hkey);
+        }
+    }
+
+    // 5. Exit this app so the uninstaller can remove the exe.
     app.exit(0);
     Ok(())
 }
@@ -1000,6 +1060,77 @@ const GAME_DATA_VERSION: &str = "更新 43《Jade 之影：众星》";
 #[tauri::command]
 fn game_data_version() -> &'static str {
     GAME_DATA_VERSION
+}
+
+// ── Training frame config ──────────────────────────────────────────────────
+
+/// Whether OCR training mode is compiled in (driven by `#[cfg(feature = "ocr-training")]`).
+const OCR_TRAINING_ENABLED: bool = cfg!(feature = "ocr-training");
+
+#[tauri::command]
+fn get_training_frame_config(cfg: tauri::State<'_, SharedConfig>) -> serde_json::Value {
+    let mt = &cfg.read().unwrap().mission_timer;
+    serde_json::json!({
+        "enabled": mt.save_training_frames && OCR_TRAINING_ENABLED,
+        "max_frames": mt.training_frames_max,
+        "feature_on": OCR_TRAINING_ENABLED,
+    })
+}
+
+#[tauri::command]
+fn set_training_frame_config(
+    _cfg: tauri::State<'_, SharedConfig>,
+    _app: tauri::AppHandle,
+    _enabled: bool,
+    _max_frames: u32,
+) -> Result<(), String> {
+    if !cfg!(feature = "ocr-training") {
+        return Err("OCR 训练模式未编译启用，请使用开发版（--features ocr-training）".into());
+    }
+    #[cfg(feature = "ocr-training")]
+    {
+        let app_data_dir = _app.path().app_data_dir().map_err(|e| e.to_string())?;
+        {
+            let mut c = _cfg.write().unwrap();
+            c.mission_timer.save_training_frames = _enabled;
+            c.mission_timer.training_frames_max = _max_frames;
+            save_config(&app_data_dir, &c)?;
+        }
+        crate::ocr::set_training_frame_config(_enabled, _max_frames);
+        Ok(())
+    }
+    #[cfg(not(feature = "ocr-training"))]
+    unreachable!()
+}
+
+#[tauri::command]
+fn cleanup_training_frames(_app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    if !cfg!(feature = "ocr-training") {
+        return Ok(serde_json::json!({ "high_score": 0, "low_score": 0, "feature_off": true }));
+    }
+    #[cfg(feature = "ocr-training")]
+    {
+        let dir = _app.path().app_data_dir().map_err(|e| e.to_string())?;
+        let (high, low) = crate::ocr::cleanup_training_frames(&dir);
+        Ok(serde_json::json!({ "high_score": high, "low_score": low }))
+    }
+    #[cfg(not(feature = "ocr-training"))]
+    unreachable!()
+}
+
+#[tauri::command]
+fn count_training_frames(_app: tauri::AppHandle) -> serde_json::Value {
+    if !cfg!(feature = "ocr-training") {
+        return serde_json::json!({ "high_score": 0, "low_score": 0, "feature_off": true });
+    }
+    #[cfg(feature = "ocr-training")]
+    {
+        let dir = _app.path().app_data_dir().unwrap_or_default();
+        let (high, low) = crate::ocr::count_training_frames(&dir);
+        serde_json::json!({ "high_score": high, "low_score": low })
+    }
+    #[cfg(not(feature = "ocr-training"))]
+    unreachable!()
 }
 
 /// Open the log files directory in Explorer.
@@ -1169,6 +1300,16 @@ pub fn run() {
 
     // ── Load config before Tauri creates any window ──
     let config: SharedConfig = Arc::new(StdRwLock::new(load_config(&app_data_dir)));
+    // Sync training-frame config statics for the OCR thread (only when compiled in).
+    #[cfg(feature = "ocr-training")]
+    {
+        crate::ocr::init_training_dir(&app_data_dir);
+        let c = config.read().unwrap();
+        crate::ocr::set_training_frame_config(
+            c.mission_timer.save_training_frames,
+            c.mission_timer.training_frames_max,
+        );
+    }
 
     // ── Create all managed state before Tauri creates any window ──
     let state: SharedState = SharedState::default();
@@ -1231,6 +1372,12 @@ pub fn run() {
             // Load item-name 中文 table (user override file, else embedded default).
             item_i18n::init(&app_data_dir);
             log_init::init(&app_data_dir);
+
+            // Log OCR training mode status so it's visible in build/release logs.
+            #[cfg(feature = "ocr-training")]
+            log::info!("OCR training mode: ENABLED (training frames will be saved)");
+            #[cfg(not(feature = "ocr-training"))]
+            log::info!("OCR training mode: OFF (no training frames will be saved)");
 
             // Market cache background init: notify frontend when ready.
             let mc = market_cache.clone();
@@ -1490,6 +1637,7 @@ pub fn run() {
                         let initialized = s.initialized;
                         // Snapshot Baro's active flag before the refresh — if any
                         // flips from false→true this tick, we need a data refresh.
+                        let worldstate_error = s.worldstate_error.clone();
                         baro_was_inactive = !s.cached_payload.baro.iter().any(|b| b.active);
                         refresh_cached_payload(
                             &mut s.cached_payload,
@@ -1498,6 +1646,7 @@ pub fn run() {
                             countdown,
                             &last_update,
                             initialized,
+                            worldstate_error,
                         );
                         // Did any Baro just arrive this tick?
                         let baro_now_active = s.cached_payload.baro.iter().any(|b| b.active);
@@ -1759,7 +1908,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, get_hotkey, set_hotkey, timer_command, list_windows, select_window, single_capture, capture_preview, test_recognize, test_alert, update_item_names, item_names_count, game_data_version, open_log_folder, get_timer_log, open_qq_chat, get_notifications, clear_notifications, open_main_navigate, get_autostart, set_autostart, uninstall_clean, check_for_update, install_update, get_bark_url, test_phone_push, search_market_items, get_market_item, refresh_market_cache, market_cache_status, translate_items, market_signin, market_signout, market_auth_status, market_set_status, market_list_orders, market_create_order, market_update_order, market_delete_order, market_close_order])
+        .invoke_handler(tauri::generate_handler![refresh_now, get_config, set_config, get_hotkey, set_hotkey, timer_command, list_windows, select_window, single_capture, capture_preview, test_recognize, test_alert, update_item_names, item_names_count, game_data_version, open_log_folder, get_timer_log, open_qq_chat, get_notifications, clear_notifications, open_main_navigate, get_autostart, set_autostart, uninstall_clean, check_for_update, install_update, get_bark_url, test_phone_push, search_market_items, get_market_item, refresh_market_cache, market_cache_status, translate_items, market_signin, market_signout, market_auth_status, market_set_status, market_list_orders, market_create_order, market_update_order, market_delete_order, market_close_order, get_training_frame_config, set_training_frame_config, cleanup_training_frames, count_training_frames])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

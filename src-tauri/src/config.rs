@@ -97,6 +97,12 @@ pub struct MissionTimerConfig {
     pub selected_hwnd: usize,
     #[serde(default = "default_window_title")]
     pub window_title: String,
+    /// Whether to save OCR frames for CNN training. Default: true (backward compat).
+    #[serde(default = "default_true")]
+    pub save_training_frames: bool,
+    /// Max frames per training directory before oldest are deleted. Default: 5000.
+    #[serde(default = "default_training_frames_max")]
+    pub training_frames_max: u32,
 }
 
 fn default_timer_mode() -> String {
@@ -135,6 +141,10 @@ fn default_fissure_hp_roi() -> ROISettings {
 fn default_window_title() -> String {
     "Warframe".into()
 }
+
+fn default_training_frames_max() -> u32 {
+    5000
+}
 fn default_alert_method() -> String {
     "focus".into()
 }
@@ -162,6 +172,8 @@ impl Default for MissionTimerConfig {
             strip_frame: default_true(),
             selected_hwnd: 0,
             window_title: default_window_title(),
+            save_training_frames: default_true(),
+            training_frames_max: default_training_frames_max(),
         }
     }
 }
@@ -268,20 +280,36 @@ pub fn config_path(app_data_dir: &Path) -> PathBuf {
 
 pub fn load_config(app_data_dir: &PathBuf) -> AppConfig {
     let path = config_path(app_data_dir);
-    if path.exists() {
-        if let Ok(json) = std::fs::read_to_string(&path) {
-            if let Ok(mut cfg) = serde_json::from_str::<AppConfig>(&json) {
-                if migrate_old_default_rois(&mut cfg) {
-                    let _ = save_config(app_data_dir, &cfg);
+    let bak = path.with_extension("json.bak");
+
+    // Try main file first, then backup on parse failure.
+    let mut source = None;
+    let candidates = [&path, &bak];
+    for candidate in &candidates {
+        if candidate.exists() {
+            if let Ok(json) = std::fs::read_to_string(candidate) {
+                if let Ok(mut cfg) = serde_json::from_str::<AppConfig>(&json) {
+                    if migrate_old_default_rois(&mut cfg) {
+                        let _ = crate::storage::atomic_write(&path, serde_json::to_string_pretty(&cfg).unwrap_or_default().as_bytes());
+                    }
+                    return cfg;
                 }
-                return cfg;
+            }
+            if source.is_none() {
+                source = Some(candidate);
             }
         }
     }
+
+    // File is missing or corrupted — log which one we tried.
+    if let Some(p) = source {
+        log::warn!("config parse failed from {}, resetting to defaults", p.display());
+    }
+
     let cfg = AppConfig::default();
     let _ = std::fs::create_dir_all(app_data_dir);
     if let Ok(json) = serde_json::to_string_pretty(&cfg) {
-        let _ = std::fs::write(&path, json);
+        let _ = crate::storage::atomic_write(&path, json.as_bytes());
     }
     cfg
 }
@@ -323,5 +351,5 @@ fn roi_matches(roi: &ROISettings, x: f64, y: f64, w: f64, h: f64) -> bool {
 pub fn save_config(app_data_dir: &PathBuf, config: &AppConfig) -> Result<(), String> {
     let _ = std::fs::create_dir_all(app_data_dir);
     let json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
-    std::fs::write(config_path(app_data_dir), json).map_err(|e| e.to_string())
+    crate::storage::atomic_write(&config_path(app_data_dir), json.as_bytes())
 }

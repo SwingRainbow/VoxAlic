@@ -23,15 +23,24 @@ let _lazySellSort: SortState = { key: 'price', dir: 'asc' };
 let _lazyBuySort: SortState = { key: 'price', dir: 'desc' };
 let _lazyObservers: IntersectionObserver[] = [];
 
+function escapeHtml(s: string): string {
+  const map: Record<string, string> = {
+    '&': '&amp;', '<': '&lt;', '>': '&gt;',
+    '"': '&quot;', "'": '&#39;'
+  };
+  return s.replace(/[&<>"']/g, c => map[c]);
+}
+
 export function orderRowHTML(o: MarketOrder, i: number): string {
   const rankCol = _lazyMaxRank ? `<td class="rank-cell">${o.mod_rank != null ? `${o.mod_rank} of ${_lazyMaxRank}` : '--'}</td>` : '';
+  const safePlayer = escapeHtml(o.player_name);
   return `<tr style="--i:${i}">
-    <td class="player" title="${o.player_name}">${o.player_name}</td>
+    <td class="player" title="${safePlayer}">${safePlayer}</td>
     <td class="status-cell">${statusLabel(o.status)}</td>
     <td class="rep-cell"><span class="rep-badge ${repClass(o.reputation)}">${o.reputation >= 0 ? '+' : ''}${o.reputation}</span></td>${rankCol}
     <td class="price">${o.platinum}p</td>
     <td class="qty-cell">${o.quantity > 1 ? `<span class="qty-badge">×${o.quantity}</span>` : '<span class="qty-one">×1'}</td>
-    <td class="whisper-cell"><button class="btn-whisper" onclick="var b=this;b.textContent='✓';setTimeout(function(){b.textContent='📋'},800);window._copyWhisper('${o.player_name}', '${_lazyItemName.replace(/'/g, "\\'")}', ${o.platinum}, '${o.order_type}')" title="复制私信">📋</button></td>
+    <td class="whisper-cell"><button class="btn-whisper" data-player-name="${safePlayer}" data-platinum="${o.platinum}" data-order-type="${escapeHtml(o.order_type)}" title="复制私信">📋</button></td>
   </tr>`;
 }
 
@@ -74,7 +83,7 @@ export function sortCtrlHTML(side: 'sell' | 'buy', key: SortKey, label: string):
   const sort = side === 'sell' ? _lazySellSort : _lazyBuySort;
   const active = sort.key === key;
   const arrow = active ? (sort.dir === 'asc' ? ' ↑' : ' ↓') : '';
-  return `<span class="sort-ctrl${active ? ' active' : ''}" onclick="window._sortMarket('${side}','${key}')">${label}${arrow}</span>`;
+  return `<span class="sort-ctrl${active ? ' active' : ''}" data-sort-side="${side}" data-sort-key="${key}">${label}${arrow}</span>`;
 }
 
 export function loadMoreOrders(side: 'sell' | 'buy') {
@@ -181,8 +190,8 @@ export function renderMarketDetail(data: MarketItemFull) {
     </div>
     ${S.marketAuthName ? `
     <div class="market-detail-actions" id="market-detail-actions">
-      <button id="btn-create-sell" onclick="window._showOrderForm('${item.slug}','sell')">📝 挂单出售</button>
-      <button id="btn-create-buy" onclick="window._showOrderForm('${item.slug}','buy')">📝 挂单求购</button>
+      <button id="btn-create-sell" data-slug="${escapeHtml(item.slug)}" data-side="sell">📝 挂单出售</button>
+      <button id="btn-create-buy" data-slug="${escapeHtml(item.slug)}" data-side="buy">📝 挂单求购</button>
     </div>` : ''}
     ${S.orderFormSlug === item.slug ? orderFormHTML(item.slug, S.orderFormSide) : ''}
     ${data.set_parts.length ? `
@@ -193,7 +202,7 @@ export function renderMarketDetail(data: MarketItemFull) {
           let label = S.marketLang === 'zh' ? marketName(p) : p.name;
           if (S.marketLang !== 'zh' && label.startsWith(base + ' ')) label = label.substring(base.length + 1);
           if (S.marketLang !== 'zh') label = label.replace(/ Blueprint$/, '');
-          return `<span class="set-part-link" onclick="window._openSetPart('${p.slug}')" title="${marketName(p)}">${label}</span>`;
+          return `<span class="set-part-link" data-slug="${escapeHtml(p.slug)}" title="${escapeHtml(marketName(p))}">${label}</span>`;
         }).join('');
       })()}
     </div>` : ''}
@@ -579,7 +588,7 @@ export function renderMyOrders() {
     return `
     <div class="my-order-row${hidden ? ' hidden' : ''}${pending ? ' pending' : ''}" data-order-id="${o.id}">
       <span class="my-order-type ${sideCls}">${sideLabel}</span>
-      <span class="my-order-name" onclick="window._openMarketItem('${slug}')" title="${o.item_name}">${o.item_name}</span>
+      <span class="my-order-name" data-slug="${escapeHtml(slug)}" title="${escapeHtml(o.item_name)}">${escapeHtml(o.item_name)}</span>
       <span class="my-order-price">${o.platinum}p</span>
       <button class="btn-qty" ${pending || atMin ? 'disabled' : ''} onclick="window._incQty('${o.id}', -1)" title="Sold / 卖出一个">−</button>
       <span class="my-order-meta">×${o.quantity}</span>
@@ -830,18 +839,7 @@ export function closeMarketDetail() {
   }
 }
 
-// ── Register window._ handlers (module top level) ─────────────────────────
-(window as any)._copyWhisper = copyWhisper;
-(window as any)._openSetPart = (slug: string) => openMarketItem(slug);
-(window as any)._showOrderForm = (slug: string, side: 'sell' | 'buy') => renderOrderForm(slug, side);
-(window as any)._editMyOrder = (orderId: string) => handleEditOrder(orderId);
-(window as any)._deleteMyOrder = (orderId: string) => handleDeleteOrder(orderId);
-(window as any)._openMarketItem = (slug: string) => openMarketItem(slug);
-(window as any)._incQty = (orderId: string, delta: number) => handleIncrement(orderId, delta);
-(window as any)._toggleVisible = (orderId: string) => handleToggleVisible(orderId);
-(window as any)._submitEdit = (orderId: string) => handleSubmitEdit(orderId);
-(window as any)._cancelEdit = () => cancelEdit();
-(window as any)._sortMarket = (side: 'sell' | 'buy', key: SortKey) => {
+function sortMarketOrders(side: 'sell' | 'buy', key: SortKey) {
   const sort = side === 'sell' ? _lazySellSort : _lazyBuySort;
   if (sort.key === key) {
     sort.dir = sort.dir === 'asc' ? 'desc' : 'asc';
@@ -858,4 +856,72 @@ export function closeMarketDetail() {
     }
   }
   reloadOrderSide(side);
-};
+}
+
+// ── Event delegation + remaining window._ handlers ────────────────────────
+
+function initMarketDelegation() {
+  const tab = document.getElementById('tab-market')!;
+
+  tab.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement;
+
+    // Whisper copy button.
+    const whisperBtn = target.closest('.btn-whisper') as HTMLElement | null;
+    if (whisperBtn) {
+      const ds = whisperBtn.dataset;
+      whisperBtn.textContent = '✓';
+      setTimeout(() => { whisperBtn.textContent = '📋'; }, 800);
+      copyWhisper(ds.playerName || '', _lazyItemName, Number(ds.platinum) || 0, ds.orderType || '');
+      return;
+    }
+
+    // Order form buttons (挂单出售 / 挂单求购).
+    if (target.id === 'btn-create-sell' || target.id === 'btn-create-buy') {
+      const slug = target.dataset.slug || '';
+      const side = target.dataset.side as 'sell' | 'buy';
+      if (slug) renderOrderForm(slug, side);
+      return;
+    }
+
+    // Set part links.
+    const partLink = target.closest('.set-part-link') as HTMLElement | null;
+    if (partLink && partLink.dataset.slug) {
+      openMarketItem(partLink.dataset.slug);
+      return;
+    }
+
+    // My-orders item name links.
+    if (target.classList.contains('my-order-name') && (target as HTMLElement).dataset.slug) {
+      openMarketItem((target as HTMLElement).dataset.slug!);
+      return;
+    }
+
+    // Sort controls.
+    if (target.classList.contains('sort-ctrl')) {
+      const side = target.dataset.sortSide as 'sell' | 'buy';
+      const key = target.dataset.sortKey as SortKey;
+      if (side && key) sortMarketOrders(side, key);
+      return;
+    }
+
+    // Back-to-top button.
+    if (target.id === 'btn-market-backtop') {
+      document.getElementById('tab-market')!.scrollTop = 0;
+      return;
+    }
+  });
+}
+
+// Call once on module init.
+initMarketDelegation();
+
+// Order-ID-based handlers (not user-controllable — server-generated UUIDs).
+// These are still on window._ for inline onclick; migrating them to data-*
+// + delegation is a follow-up cleanup, not an XSS priority.
+(window as any)._editMyOrder = (orderId: string) => handleEditOrder(orderId);
+(window as any)._deleteMyOrder = (orderId: string) => handleDeleteOrder(orderId);
+(window as any)._incQty = (orderId: string, delta: number) => handleIncrement(orderId, delta);
+(window as any)._toggleVisible = (orderId: string) => handleToggleVisible(orderId);
+(window as any)._submitEdit = (orderId: string) => handleSubmitEdit(orderId);
+(window as any)._cancelEdit = () => cancelEdit();

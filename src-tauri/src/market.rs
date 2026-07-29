@@ -563,9 +563,8 @@ pub async fn refresh_market_cache(
         .app_data_dir()
         .map_err(|e| e.to_string())?;
     let json = serde_json::to_string(&map.values().collect::<Vec<_>>()).map_err(|e| e.to_string())?;
-    let tmp = app_data_dir.join("market_items.json.tmp");
-    std::fs::write(&tmp, &json).map_err(|e| format!("写入失败: {e}"))?;
-    std::fs::rename(&tmp, app_data_dir.join(FILE_NAME)).map_err(|e| format!("保存失败: {e}"))?;
+    crate::storage::atomic_write(&app_data_dir.join(FILE_NAME), json.as_bytes())
+        .map_err(|e| format!("保存失败: {e}"))?;
 
     let now = crate::api::now_ms();
     {

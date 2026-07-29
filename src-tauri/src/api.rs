@@ -1777,26 +1777,44 @@ pub async fn fetch_worldstate(source: &str) -> Result<Value, String> {
         (API_URL, API_URL_MIRROR)
     };
 
-    match client.get(primary).send().await {
-        Ok(resp) => {
-            match resp.json::<Value>().await {
-                Ok(json) => return Ok(json),
-                Err(_e) => {
-                    warn!("worldstate primary parse error: {_e}, trying fallback");
-                }
-            }
+    // Helper: fetch from one URL, return Ok(json) on success or a string error.
+    async fn fetch_one(client: &reqwest::Client, url: &str) -> Result<Value, String> {
+        let resp = client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| format!("HTTP fetch: {e}"))?;
+        let status = resp.status().as_u16();
+        if !resp.status().is_success() {
+            return Err(format!("HTTP {status}"));
         }
-        Err(_e) => {
-            warn!("worldstate primary fetch error: {_e}, trying fallback");
+        let json: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("JSON parse: {e}"))?;
+        // Must be an object with at least one known worldstate key — reject
+        // error envelopes like {"error": "server unavailable"}.
+        if !json.is_object() {
+            return Err("response is not a JSON object".into());
         }
+        let has_worldstate_keys = json.get("ActiveMissions").is_some()
+            || json.get("SyndicateMissions").is_some()
+            || json.get("VoidTraders").is_some()
+            || json.get("Events").is_some()
+            || json.get("timestamp").is_some();
+        if !has_worldstate_keys {
+            return Err("response missing worldstate keys (not a valid worldstate payload)".into());
+        }
+        Ok(json)
     }
 
-    // Fallback
-    let resp = client
-        .get(fallback)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    let json: Value = resp.json().await.map_err(|e| e.to_string())?;
-    Ok(json)
+    match fetch_one(&client, primary).await {
+        Ok(json) => return Ok(json),
+        Err(e) => warn!("worldstate primary error: {e}, trying fallback"),
+    }
+
+    fetch_one(&client, fallback).await.map_err(|e| {
+        warn!("worldstate fallback error: {e}");
+        e
+    })
 }

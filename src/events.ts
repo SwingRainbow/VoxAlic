@@ -9,8 +9,33 @@ import { availableMissionTypes } from './tabs/settings';
 
 export function handleUpdate(payload: AppStatePayload) {
   S.currentData = payload;
-  // Subtle "last updated" watermark at the bottom of the 世界时间 tab. The
-  // "下次刷新 Ns" countdown is intentionally hidden for now.
+
+  // Worldstate error state — show banner, hide data panels.
+  const errBanner = document.getElementById('worldstate-error-banner');
+  if (payload.worldstate_error) {
+    if (errBanner) {
+      errBanner.classList.remove('hidden');
+      const msgEl = errBanner.querySelector('.worldstate-error-msg');
+      const timeEl = errBanner.querySelector('.worldstate-error-time');
+      if (msgEl) msgEl.textContent = payload.worldstate_error;
+      if (timeEl) timeEl.textContent = payload.worldstate_error_time || '';
+    }
+    // Clear data panels — the payload already has empty arrays from Rust side.
+    document.getElementById('cycles-updated')!.textContent = '';
+    renderCycles([]);
+    renderBountyPanel([]);
+    renderCircuitPanel(null);
+    renderBaro([]);
+    renderArbitration(null);
+    updateFilters();
+    renderFissures();
+    renderTimer(payload.mission_timer);
+    return;
+  }
+
+  // Normal path — hide error banner.
+  if (errBanner) errBanner.classList.add('hidden');
+
   document.getElementById('cycles-updated')!.textContent =
     `更新于 ${payload.last_update}`;
   renderCycles(payload.cycles);

@@ -77,6 +77,15 @@ scripts/
 *.csv
 baro_zh_compressed.bin
 
+# OCR annotation files (large, local-only)
+annotate_*.html
+
+# DS/Codex review reports (local, not committed)
+ds_report.md
+codex_check.md
+codex_fix_plan.md
+codex_reply.md
+
 # Images / data files
 *.jpg
 *.jpeg
