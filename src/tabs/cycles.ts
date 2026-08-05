@@ -26,26 +26,42 @@ export const baroSigs = new Map<string, string>();
 
 // ── Baro progress animation across app restarts ──────────────────────────
 const BARO_ANIM_KEY = 'baro_pos_v1';
-const SLIDE_COOLDOWN_MS = 60_000;
-let _baroLastSlideMs = 0;
+const BARO_LEGACY_POS_MAX_AGE_MS = 14 * 24 * 3600 * 1000;
+const _baroSlideHandled = new Set<string>();
 
-function saveBaroPos(loc: string, pct: number) {
+interface SavedBaroPos {
+  p: number;
+  ts: number;
+  start_ms?: number;
+}
+
+function saveBaroPos(loc: string, pct: number, startMs: number) {
   try {
     const raw = localStorage.getItem(BARO_ANIM_KEY);
     const data = raw ? JSON.parse(raw) : {};
-    data[loc] = { p: Math.round(pct * 100) / 100, ts: Date.now() };
+    data[loc] = {
+      p: Math.round(pct * 100) / 100,
+      ts: Date.now(),
+      start_ms: startMs,
+    };
     localStorage.setItem(BARO_ANIM_KEY, JSON.stringify(data));
   } catch { /* quota exceeded — ignore */ }
 }
 
-function loadBaroPos(loc: string): number {
+function loadBaroPos(loc: string): SavedBaroPos | null {
   try {
     const raw = localStorage.getItem(BARO_ANIM_KEY);
-    if (!raw) return -1;
+    if (!raw) return null;
     const entry = JSON.parse(raw)[loc];
-    if (entry && typeof entry.p === 'number') return entry.p;
+    if (entry && typeof entry.p === 'number') {
+      return {
+        p: Math.max(0, Math.min(90, entry.p)),
+        ts: typeof entry.ts === 'number' ? entry.ts : 0,
+        start_ms: typeof entry.start_ms === 'number' ? entry.start_ms : undefined,
+      };
+    }
   } catch { /* corrupt data — ignore */ }
-  return -1;
+  return null;
 }
 
 export let arbSig = '';
@@ -285,58 +301,81 @@ export function renderBaro(baroList: BaroInfo[]) {
       const pct = Math.max(0, Math.min(90, (1 - baro.remain_ms / CYCLE_MS) * 100));
       const track = document.getElementById(`baro-pt-${safeBaroId(baro.location)}`);
       if (track) {
-        const tr = track as any;
-        if (!tr._sliding) {
-          track.style.setProperty('--p', pct + '%');
-        }
-        saveBaroPos(baro.location, pct);
+        const tr = track as HTMLElement & { _sliding?: boolean };
+        const slideKey = `${baro.location}|${baro.start_ms}`;
 
-        // Slides in from the left every cooldown window.
-        if (!tr._sliding && Date.now() - _baroLastSlideMs > SLIDE_COOLDOWN_MS) {
-          const coll = track.children;
-          if (!coll.length) return;
-          _baroLastSlideMs = Date.now();
+        // Animate once per trader window and app session. Crucially, read the
+        // persisted position before writing today's freshly calculated one.
+        if (!_baroSlideHandled.has(slideKey)) {
+          _baroSlideHandled.add(slideKey);
+          const saved = loadBaroPos(baro.location);
+          const savedIsSameWindow = !!saved && (
+            saved.start_ms === baro.start_ms ||
+            (saved.start_ms === undefined && Date.now() - saved.ts <= BARO_LEGACY_POS_MAX_AGE_MS)
+          );
+          // A lower current percentage means the cycle reset or the API moved
+          // the visit. Never animate Baro backwards in that case.
+          const fromPct = savedIsSameWindow && saved && saved.p <= pct ? saved.p : pct;
+          const shouldSlide = pct - fromPct >= 0.05;
+          track.style.setProperty('--p', fromPct + '%');
 
-          const doSlide = () => {
-            if (document.hidden) return;
-            const saved = loadBaroPos(baro.location);
-            const fromPct = saved >= 0 ? saved : 0;
+          if (shouldSlide) {
+            // Mark pending immediately so per-second ticks cannot overwrite the
+            // old position while we wait for the splash screen to disappear.
             tr._sliding = true;
-            for (let i = 0; i < coll.length; i++) (coll[i] as HTMLElement).style.transition = 'none';
-            track.style.setProperty('--p', fromPct + '%');
 
-            const startMs = performance.now();
-            const span = pct - fromPct;
-            const DUR = 3000;
-            const anim = (now: number) => {
-              const t = Math.min((now - startMs) / DUR, 1);
-              const e = 1 - Math.pow(1 - t, 3);
-              track.style.setProperty('--p', (fromPct + span * e) + '%');
-              if (t < 1) {
-                requestAnimationFrame(anim);
-              } else {
-                for (let i = 0; i < coll.length; i++) (coll[i] as HTMLElement).style.transition = '';
+            const doSlide = () => {
+              const children = Array.from(track.children) as HTMLElement[];
+              if (document.hidden || !track.isConnected || !children.length) {
+                track.style.setProperty('--p', pct + '%');
                 tr._sliding = false;
+                saveBaroPos(baro.location, pct, baro.start_ms);
+                return;
               }
-            };
-            requestAnimationFrame(anim);
-          };
 
-          // Wait for splash overlay to finish, then pause 800ms.
-          const splash = document.getElementById('splash-overlay');
-          if (splash) {
-            const poll = () => {
-              const el = document.getElementById('splash-overlay');
-              if (!el || parseFloat(getComputedStyle(el).opacity) < 0.05) {
-                setTimeout(doSlide, 800);
-              } else {
-                setTimeout(poll, 150);
-              }
+              for (const child of children) child.style.transition = 'none';
+              track.style.setProperty('--p', fromPct + '%');
+
+              const startMs = performance.now();
+              const span = pct - fromPct;
+              const DUR = 3000;
+              const anim = (now: number) => {
+                const t = Math.min((now - startMs) / DUR, 1);
+                const e = 1 - Math.pow(1 - t, 3);
+                track.style.setProperty('--p', (fromPct + span * e) + '%');
+                if (t < 1) {
+                  requestAnimationFrame(anim);
+                } else {
+                  for (const child of children) child.style.transition = '';
+                  tr._sliding = false;
+                  saveBaroPos(baro.location, pct, baro.start_ms);
+                }
+              };
+              requestAnimationFrame(anim);
             };
-            poll();
+
+            // Wait for splash overlay to finish, then pause 800ms.
+            const splash = document.getElementById('splash-overlay');
+            if (splash) {
+              const poll = () => {
+                const el = document.getElementById('splash-overlay');
+                if (!el || parseFloat(getComputedStyle(el).opacity) < 0.05) {
+                  setTimeout(doSlide, 800);
+                } else {
+                  setTimeout(poll, 150);
+                }
+              };
+              poll();
+            } else {
+              setTimeout(doSlide, 800);
+            }
           } else {
-            setTimeout(doSlide, 800);
+            saveBaroPos(baro.location, pct, baro.start_ms);
           }
+        } else if (!tr._sliding) {
+          // Normal per-second movement after the one-time catch-up animation.
+          track.style.setProperty('--p', pct + '%');
+          saveBaroPos(baro.location, pct, baro.start_ms);
         }
       }
 
